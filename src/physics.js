@@ -185,7 +185,10 @@ export class Rider {
     const sideways = smoothstep(0.95, 1.3, Math.abs(betaS));     // ~55°..75°
     // twist: pull down AND push far to one side = keep rotating the board that way on a flat base
     // (ground 180/360, switching which foot leads). Light pull or small sideways = brake/side-slip.
-    const twist = this.grounded && pull > 0.2 && Math.abs(steer) >= 0.55;
+    // needs a deliberate, held gesture (pull well down + drag almost all the way) so it doesn't fire by accident
+    const twistWant = this.grounded && pull > 0.45 && Math.abs(steer) >= 0.8;
+    this.twistT = twistWant ? (this.twistT || 0) + dt : 0;
+    const twist = twistWant && this.twistT > 0.25;
     tel.twist = twist;
     if (!twist && sideways > 0.5 && Math.abs(steer) > 0.3 && Math.abs(refF) < 0.4 * Math.hypot(refF, refR)) {
       // board across the slide: the end on the side you push becomes the new nose
@@ -204,7 +207,7 @@ export class Rider {
     // board that's been twisted past 90° simply continues switch instead of being pulled back
     let bodyGain = brake > 0.05 ? 1 : smoothstep(0.07, 0.22, Math.abs(betaS)) * (0.25 + 0.6 * assist);
     if (twist) {
-      wBody = Math.sign(steer) * (2.4 + 3.2 * (Math.abs(steer) - 0.55) / 0.45); // up to ~5.6 rad/s
+      wBody = Math.sign(steer) * (1.5 + 1.1 * (Math.abs(steer) - 0.8) / 0.2); // 1.5–2.6 rad/s: a 180 takes ~1.3–2 s
       bodyGain = 1;
     }
 
@@ -297,7 +300,8 @@ export class Rider {
       const kR = P.kRider * eff * (brake > 0.05 || Math.abs(wSlow) > 0.05 || bodyGain > 0.05 ? 1 : 0.35);
       const wWant = (kS * wCarve + kR * wRider) / (kS + kR + 1e-6);
       let alpha = (kS + kR) * (wWant - this.omega);
-      alpha = clamp(alpha, -P.maxYawAcc - 40 * bite, P.maxYawAcc + 40 * bite);
+      const aLim = tel.twist ? 7 : P.maxYawAcc + 40 * bite; // twisting the whole body+board round builds up slowly
+      alpha = clamp(alpha, -aLim, aLim);
       this.omega += alpha * dt;
       const w = this.omega;
       this.yaw -= w * dt; // + w = turning right; right = -dYaw (see frame)

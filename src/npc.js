@@ -31,7 +31,7 @@ export function animateRider(model, rider, vis, input, dt) {
   const k = (rate) => 1 - Math.exp(-dt * rate);
   vis.crash += ((crashed ? 1 : 0) - vis.crash) * k(crashed ? 9 : 4);
   vis.edge += (rider.edge - vis.edge) * k(20);
-  let leanT = rider.grounded ? Math.atan(clamp(t.latG, -2.2, 2.2)) * 0.85 : vis.edge * 0.3;
+  let leanT = rider.grounded ? clamp(Math.atan(clamp(t.latG, -2.2, 2.2)) * 0.78, -0.85, 0.85) : vis.edge * 0.3;
   leanT = leanT * (1 - vis.crash) + vis.crash * (rider.edge >= 0 ? 1.35 : -1.35);
   vis.lean += (leanT - vis.lean) * k(10);
   const tuck = Math.max(0, -(input.pull || 0));
@@ -40,10 +40,21 @@ export function animateRider(model, rider, vis, input, dt) {
   const euro = model.kind === 'board' && rider.grounded && !crashed && rider.edge > 0.95 && rider.mode === MODES.carve ? 1 : 0;
   vis.drag += (euro - vis.drag) * k(6);
   vis.arms += ((rider.grounded ? 0.25 + 0.4 * Math.min(1, t.skid / 3) : 0.85) - vis.arms) * k(6);
-  const twistT = model.kind === 'ski' ? clamp(t.omega, -1, 1) * 0.3 : (rider.travel > 0 ? 0.55 : -0.55) + 0.25 * clamp(t.omega, -1, 1) * rider.travel;
+  // edge side shapes the whole posture
+  const eN = clamp(rider.edge / 0.75, -1, 1) * (rider.grounded ? 1 : 0.3);
+  vis.heel = (vis.heel || 0) + (Math.max(0, -eN) - (vis.heel || 0)) * k(8);
+  vis.toe = (vis.toe || 0) + (Math.max(0, eN) - (vis.toe || 0)) * k(8);
+  const deepHeel = model.kind === 'board' && rider.grounded && !crashed && rider.edge < -0.95 && rider.mode === MODES.carve ? 1 : 0;
+  vis.heelDrag = (vis.heelDrag || 0) + (deepHeel - (vis.heelDrag || 0)) * k(6);
+  // upper body: heelside opens toward the nose, toeside closes toward the slope;
+  // when the board slides sideways the shoulders stay facing where you're going
+  const vrS = rider.v[0] * rider.r[0] + rider.v[2] * rider.r[2], vfS = rider.v[0] * rider.f[0] + rider.v[2] * rider.f[2];
+  const slipSigned = t.speed > 2 ? Math.atan2(vrS * rider.travel, Math.abs(vfS)) : 0;
+  const twistT = model.kind === 'ski' ? clamp(t.omega, -1, 1) * 0.3
+    : rider.travel * (0.5 + 0.3 * vis.heel - 0.2 * vis.toe) + 0.25 * clamp(t.omega, -1, 1) * rider.travel - 0.5 * slipSigned;
   vis.twist += (twistT - vis.twist) * k(5);
   vis.grab = (vis.grab || 0) + ((t.grab ? 1 : 0) - (vis.grab || 0)) * k(10);
-  model.pose({ grab: vis.grab, edge: vis.edge * (1 - vis.crash), lean: vis.lean, crouch: Math.max(vis.crouch, vis.grab * 0.95), twist: vis.twist, arms: vis.arms, drag: vis.drag, crash: vis.crash, air: rider.grounded ? 0 : 1, fore: tuck * 0.6, t: vis.t });
+  model.pose({ heel: vis.heel, toe: vis.toe, heelDrag: vis.heelDrag, grab: vis.grab, edge: vis.edge * (1 - vis.crash), lean: vis.lean, crouch: Math.max(vis.crouch, vis.grab * 0.95) + 0.12 * vis.heel, twist: vis.twist, arms: vis.arms, drag: vis.drag, crash: vis.crash, air: rider.grounded ? 0 : 1, fore: tuck * 0.6, t: vis.t });
 }
 
 // ---------------------------------------------------------------- bots

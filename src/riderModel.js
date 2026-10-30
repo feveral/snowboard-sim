@@ -234,7 +234,9 @@ export function createRiderModel(opts = {}) {
     const feet = [V(0, 0.1, 0.25), V(0, 0.1, -0.25)].map((f) => V(f.x * c - f.y * sn, f.x * sn + f.y * c, f.z));
     const bob = Math.sin(s.t * 2.1) * 0.006;
     const hipY = 0.93 - 0.36 * s.crouch + bob;
-    const hipX = 0.04 - 0.08 * s.crouch + s.fore * 0.1;
+    const heel = s.heel || 0, toe = s.toe || 0;
+    // heelside: sit back over the heels; toeside: drive the knees and hips toward the toes
+    const hipX = 0.04 - 0.08 * s.crouch + s.fore * 0.1 + 0.13 * heel * (1 - 0.5 * Math.min(1, Math.abs(s.lean) / 0.8)) - 0.08 * toe;
     const hipC = V(hipX, hipY, 0);
     const legs = ['L', 'R'];
     for (let i = 0; i < 2; i++) {
@@ -252,7 +254,7 @@ export function createRiderModel(opts = {}) {
       boots[i].rotation.set(0, 0, rel);
     }
     P.pelvis.position.copy(hipC).add(V(0.01, 0.05, 0));
-    const bend = 0.12 + 0.42 * s.crouch - s.fore * 0.2 - Math.max(0, s.lean) * 0.55 + Math.max(0, -s.lean) * 0.15;
+    const bend = 0.12 + 0.42 * s.crouch - s.fore * 0.2 - Math.max(0, s.lean) * 0.55 + Math.max(0, -s.lean) * 0.15 + 0.22 * toe - 0.28 * heel - 0.25 * Math.max(0, -s.lean - 0.4);
     const ang = -s.lean * 0.35 * (1 - s.crash);
     tmp.e.set(ang, s.twist, bend, 'YXZ'); tmp.q.setFromEuler(tmp.e);
     const spine = V(0, 1, 0).applyQuaternion(tmp.q);
@@ -266,7 +268,10 @@ export function createRiderModel(opts = {}) {
     for (const [L, sg] of [['L', 1], ['R', -1]]) {
       const sh = neck.clone().addScaledVector(spine, -0.08).addScaledVector(side, 0.2 * sg);
       let hand;
-      if (s.drag > 0.01 && sg > 0) hand = sh.clone().add(V(-0.28 - 0.25 * s.drag, -0.62 * s.drag - 0.15, 0.25 * s.drag));
+      // a point on the snow (board frame) expressed in the leaning body's frame
+      const snowAt = (x, z) => { const c = Math.cos(-s.lean), sn = Math.sin(-s.lean); return V(x * c - 0.06 * sn, x * sn + 0.06 * c, z); };
+      if (s.drag > 0.01 && sg > 0) hand = sh.clone().lerp(snowAt(-0.6, 0.3), Math.min(1, s.drag * 1.1));           // toeside: front hand on the snow
+      else if ((s.heelDrag || 0) > 0.01 && sg < 0) hand = sh.clone().lerp(snowAt(0.62, -0.25), Math.min(1, s.heelDrag * 1.1)); // heelside: rear hand trails behind
       else if (s.grab > 0.05 && sg < 0) {
         // grab: rear hand reaches down to the toe edge between the bindings
         const rel2 = s.edge - s.lean, c2 = Math.cos(rel2), sn2 = Math.sin(rel2);
@@ -278,6 +283,12 @@ export function createRiderModel(opts = {}) {
         const out = 0.22 + 0.32 * s.arms;
         const sway = Math.sin(s.t * 1.7 + sg) * 0.02;
         hand = sh.clone().add(V(-0.2 - 0.1 * s.crouch, -0.42 + 0.3 * s.arms + 0.25 * s.air + sway, sg * out));
+        // heelside: both hands reach forward over the toes for balance
+        hand.add(V(-0.22 * heel, 0.12 * heel, (sg > 0 ? 0.12 : 0.22) * heel));
+        // toeside: front arm points down the turn, rear arm stays back and low
+        hand.add(sg > 0 ? V(-0.05 * toe, 0.05 * toe, 0.2 * toe) : V(0.08 * toe, -0.1 * toe, -0.15 * toe));
+        // tuck: hands come in toward the knees
+        hand.lerp(V(-0.2, 0.55, sg * 0.12), Math.max(0, s.fore) * 0.9);
         if (s.grab > 0.05) hand.add(V(0, 0.25 * s.grab, sg * 0.15 * s.grab)); // free arm out for style
       }
       if (s.crash > 0.5) hand = sh.clone().add(V(-0.1, 0.25, sg * 0.45));

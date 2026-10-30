@@ -69,11 +69,14 @@ function drop(z) {
 export function height(x, z) {
   const pi = pisteInfo(x, z);
   const dx = pi.d;
-  let h = -drop(z);
+  let base = -drop(z);
   // valley: sides rise away from the nearest piste (saturating); width breathes
   const W = 58 + 18 * Math.sin(z / 260 + 1.1);
   const q = dx / W;
-  h += 9.5 * (q * q) / (1 + q * 0.35);
+  base += 9.5 * (q * q) / (1 + q * 0.35);
+  const pm = parkMask(x, z);
+  if (pm >= 1) return base + parkFeatures(x, z);
+  let h = 0;
   // large undulation
   h += 4.5 * fbm(x * 0.017 + 5.1, z * 0.017, 3);
   // rollers across the slope (some big enough to pop you off at speed)
@@ -89,7 +92,85 @@ export function height(x, z) {
     h += m * 0.75 * Math.sin(u) * Math.sin(v);
   }
   h += kicker(x, z);
+  if (pm <= 0) return base + h;
+  return base + h * (1 - pm) + pm * parkFeatures(x, z);
+}
+
+// ---------------------------------------------------------------- terrain park
+// A groomed park on the main run every 2.1 km: two jump lines (small / big tabletops),
+// ride-on boxes and a set of rollers. Features follow the piste centre line.
+export const PARK_PERIOD = 2100, PARK_START = 560, PARK_LEN = 340;
+export const PARK_HALF = 17;
+export const PARK_FEATURES = [
+  { type: 'jump', off: 6, u: 40, H: 1.0, T: 4, name: 'S' },
+  { type: 'jump', off: -6, u: 52, H: 1.9, T: 8, name: 'M' },
+  { type: 'jump', off: 6, u: 108, H: 1.4, T: 6, name: 'S' },
+  { type: 'jump', off: -6, u: 128, H: 2.6, T: 11, name: 'L' },
+  { type: 'jump', off: 6, u: 178, H: 1.8, T: 7, name: 'M' },
+  { type: 'jump', off: -6, u: 212, H: 3.2, T: 14, name: 'XL' },
+  { type: 'box', off: 5, u: 272, len: 7, h: 0.55, name: 'Box' },
+  { type: 'box', off: -5, u: 278, len: 10, h: 0.6, name: 'Long Box' },
+  { type: 'rollers', off: 0, u: 300, len: 36 },
+];
+for (const f of PARK_FEATURES) if (f.type === 'jump') { f.Lt = 3.3 * f.H; f.Ll = 6.5 * f.H; f.W = 6.5; }
+export function parkAt(z) {
+  const k = Math.floor((z - PARK_START + 60) / PARK_PERIOD);
+  if (k < 0) return null;
+  const z0 = PARK_START + k * PARK_PERIOD;
+  if (z < z0 - 45 || z > z0 + PARK_LEN + 45) return null;
+  return { k, z0 };
+}
+export function parkMask(x, z) {
+  const P = parkAt(z);
+  if (!P) return 0;
+  const u = z - P.z0;
+  const along = smoothstep(-40, -12, u) * (1 - smoothstep(PARK_LEN + 12, PARK_LEN + 40, u));
+  const across = 1 - smoothstep(PARK_HALF + 1, PARK_HALF + 9, Math.abs(x - pisteCenter(z)));
+  return along * across;
+}
+function jumpProfile(f, u) {
+  // takeoff (parabola, lip ~30°) -> flat table -> knuckle + landing (smoothstep down)
+  if (u <= 0) return 0;
+  if (u < f.Lt) { const t = u / f.Lt; return f.H * t * t; }
+  if (u < f.Lt + f.T) return f.H;
+  const t = (u - f.Lt - f.T) / f.Ll;
+  if (t >= 1) return 0;
+  return f.H * (1 - t * t * (3 - 2 * t));
+}
+export function parkFeatures(x, z) {
+  const P = parkAt(z);
+  if (!P) return 0;
+  const u = z - P.z0, dx = x - pisteCenter(z);
+  let h = 0;
+  for (const f of PARK_FEATURES) {
+    const lu = u - f.u;
+    if (f.type === 'jump') {
+      if (lu < 0 || lu > f.Lt + f.T + f.Ll) continue;
+      const side = 1 - smoothstep(f.W / 2 - 0.5, f.W / 2 + 1.8, Math.abs(dx - f.off));
+      if (side > 0) h += jumpProfile(f, lu) * side;
+    } else if (f.type === 'box') {
+      if (lu < 0 || lu > f.len) continue;
+      const side = 1 - smoothstep(0.42, 0.6, Math.abs(dx - f.off));
+      if (side > 0) h += f.h * smoothstep(0, 1.4, lu) * side;
+    } else if (f.type === 'rollers') {
+      if (lu < 0 || lu > f.len) continue;
+      const env = smoothstep(0, 4, lu) * (1 - smoothstep(f.len - 4, f.len, lu));
+      h += 0.75 * env * (0.5 - 0.5 * Math.cos(lu / 9 * Math.PI * 2));
+    }
+  }
   return h;
+}
+// which box (if any) the point is on
+export function boxAt(x, z) {
+  const P = parkAt(z);
+  if (!P) return null;
+  const u = z - P.z0, dx = x - pisteCenter(z);
+  for (const f of PARK_FEATURES) {
+    if (f.type !== 'box') continue;
+    const lu = u - f.u;
+    if (lu > 1.0 && lu < f.len && Math.abs(dx - f.off) < 0.45) return f;
+  }
+  return null;
 }
 
 // Natural kickers / drop-offs on the piste every ~140 m
@@ -103,6 +184,7 @@ export function kickerAt(k) {
 function kicker(x, z) {
   const k = Math.round((z - 150) / KICK_SPACING);
   if (k < 0) return 0;
+  if (parkAt(150 + k * KICK_SPACING)) return 0;
   const { kx, kz, hgt } = kickerAt(k);
   const u = z - kz;
   if (u < -9 || u > 3.5) return 0;
@@ -130,6 +212,12 @@ export function surface(x, z) {
   const off = smoothstep(16, 30, dx);
   const iceN = noise2(x * 0.035 + 40, z * 0.03);
   const ice = off < 0.5 && iceN > 0.38 ? smoothstep(0.38, 0.5, iceN) : 0;
+  const pm = parkMask(x, z);
+  if (pm > 0.5) {
+    const box = boxAt(x, z);
+    if (box) return { phi: 2 * D2R, mu: 0.02, ice: 0, off: 0, box };
+    return { phi: 12 * D2R, mu: 0.04, ice: 0, off: 0, park: true };
+  }
   const phi = (11 - 8 * ice + 4 * off) * D2R;
   const mu = 0.045 - 0.015 * ice + 0.06 * off;
   return { phi, mu, ice, off };
@@ -161,6 +249,7 @@ export function gateAt(k) {
     const kc = kickerAt(kk);
     if (z > kc.kz - 34 && z < kc.kz + 40) return null;
   }
+  if (parkAt(z)) return null;
   const side = k % 2 ? 1 : -1;
   const x = pisteCenter(z) + side * (5 + 1.5 * hash2(k, 991));
   return { k, x, z, side, color: k % 2 ? 'red' : 'blue' };
@@ -171,6 +260,7 @@ export function gatesInRange(z0, z1, cb) {
 }
 
 function clearZone(cx, cz) {
+  if (parkAt(cz) && Math.abs(cx - pisteCenter(cz)) < PARK_HALF + 8) return true;
   if (cz < 30 && Math.abs(cx - pisteCenter(cz)) < 30) return true;
   const kk = Math.round((cz - 150) / KICK_SPACING);
   if (kk >= 0) {

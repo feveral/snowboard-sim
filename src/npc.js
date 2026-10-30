@@ -2,7 +2,7 @@
 // "physics state -> animated model" mapping.
 import * as THREE from 'three';
 import { Rider, MODES } from './physics.js';
-import { terrain, pisteCenter, activeBranch, branchCenter, height } from './terrain.js';
+import { terrain, pisteCenter, activeBranch, branchCenter, height, parkAt, PARK_HALF } from './terrain.js';
 import { createRiderModel, createSkierModel, OUTFITS } from './riderModel.js';
 import { Tracks } from './fx.js';
 import { clamp } from './noise.js';
@@ -42,7 +42,8 @@ export function animateRider(model, rider, vis, input, dt) {
   vis.arms += ((rider.grounded ? 0.25 + 0.4 * Math.min(1, t.skid / 3) : 0.85) - vis.arms) * k(6);
   const twistT = model.kind === 'ski' ? clamp(t.omega, -1, 1) * 0.3 : (rider.travel > 0 ? 0.55 : -0.55) + 0.25 * clamp(t.omega, -1, 1) * rider.travel;
   vis.twist += (twistT - vis.twist) * k(5);
-  model.pose({ edge: vis.edge * (1 - vis.crash), lean: vis.lean, crouch: vis.crouch, twist: vis.twist, arms: vis.arms, drag: vis.drag, crash: vis.crash, air: rider.grounded ? 0 : 1, fore: tuck * 0.6, t: vis.t });
+  vis.grab = (vis.grab || 0) + ((t.grab ? 1 : 0) - (vis.grab || 0)) * k(10);
+  model.pose({ grab: vis.grab, edge: vis.edge * (1 - vis.crash), lean: vis.lean, crouch: Math.max(vis.crouch, vis.grab * 0.95), twist: vis.twist, arms: vis.arms, drag: vis.drag, crash: vis.crash, air: rider.grounded ? 0 : 1, fore: tuck * 0.6, t: vis.t });
 }
 
 // ---------------------------------------------------------------- bots
@@ -91,6 +92,24 @@ class Bot {
   think(dt, player) {
     const r = this.rider, S = this.style;
     const z = r.p[2];
+    // terrain park: line up on a jump line and ride it straight; freeriders spin
+    if (parkAt(z) && Math.abs(r.p[0] - pisteCenter(z)) < PARK_HALF + 4) {
+      const line = S.maxV > 15 ? -6 : 6;
+      if (!r.grounded) {
+        if (S.key === 'freerider' && this.spinLeft === undefined) this.spinLeft = Math.PI * (Math.random() < 0.5 ? 1 : 2);
+        if (this.spinLeft > 0) { const before = r.yaw; this.input.steer = 1; this.spinLeft -= Math.abs(r.yaw - (this.lastYaw ?? r.yaw)); this.lastYaw = r.yaw; this.input.pull = 0; return; }
+        const agl = r.p[1] - terrain.height(r.p[0], r.p[2]);
+        this.input.steer = 0; this.input.pull = S.key === 'carver' && (r.v[1] > 0 || agl > 1.3) ? 0.6 : 0; // carvers grab, let go before landing
+        return;
+      }
+      this.spinLeft = undefined; this.lastYaw = undefined;
+      const aim = pisteCenter(z + 12) + line;
+      const head = Math.atan2(r.v[0], r.v[2]), want = Math.atan2(aim - r.p[0], 12);
+      this.steerS = clamp(-(want - head) * 2.5, -0.35, 0.35);
+      this.input.steer = this.steerS;
+      this.input.pull = r.tel.speed > (line < 0 ? 17 : 13) ? 0.25 : -0.5;
+      return;
+    }
     let lane = pisteCenter(z) + this.laneOff;
     const b = activeBranch(z);
     if (b && this.takeBranch) lane = branchCenter(b, z) + this.laneOff * 0.6;

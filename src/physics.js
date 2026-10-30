@@ -182,8 +182,11 @@ export class Rider {
     const alignGain = brake > 0.05 ? 1 : smoothstep(0.07, 0.22, Math.abs(betaS)) * 0.75;
     const wPivotAll = this.grounded && spA + 1 > 0 ? wPivotRaw * alignGain : 0;
 
+    const onBox = this.grounded && !!T.surface(p[0], p[2]).box;
+    tel.onBox = onBox;
     let edgeTarget = steer * this.travel * P.maxEdge;
-    if (brake > 0.05) {
+    if (onBox) edgeTarget = 0; // flat base on the box: slide (50-50 or boardslide with pull)
+    else if (brake > 0.05) {
       // engage the trailing (uphill) edge: opposite to the board's sideways motion
       const slideR = dot(v, this.r);
       const grL = n0[0] * n0[1] * this.r[0] + (n0[1] * n0[1] - 1) * this.r[1] + n0[2] * n0[1] * this.r[2]; // gravity across the board
@@ -201,6 +204,16 @@ export class Rider {
     const th = Math.abs(this.edge);
     const eSign = Math.sign(this.edge);
     tel.brake = brake;
+    this.ollieCool = Math.max(0, (this.ollieCool || 0) - dt);
+    tel.grab = !this.grounded && pull > 0.35;
+    if (input.ollie && this.grounded && this.ollieCool <= 0) {
+      // pop: spring off the tail, a bit more with speed
+      const n = this.n, pop = 2.6 + Math.min(1.2, spA * 0.05);
+      for (let i = 0; i < 3; i++) v[i] += n[i] * pop;
+      p[1] += 0.03;
+      this.grounded = false; this.airT = 0; this.ollieCool = 0.45;
+      tel.ollie = true;
+    }
 
     const cda = P.cdaUpright + (P.cdaTuck - P.cdaUpright) * tuck;
     const kd = P.massDragK * cda;
@@ -340,7 +353,7 @@ export class Rider {
       const sp = Math.hypot(v[0], v[1], v[2]);
       const sc = Math.max(0, sp - kd * sp * sp * dt) / (sp || 1);
       for (let i = 0; i < 3; i++) v[i] *= sc;
-      this.yaw -= steer * this.travel * 3.2 * dt; // spin
+      this.yaw -= steer * (tel.grab ? 4.6 : 6.6) * dt; // spin (steer direction = spin direction on screen)
       p[0] += v[0] * dt; p[1] += v[1] * dt; p[2] += v[2] * dt;
       this.mode = MODES.air;
       tel.speed = sp;
@@ -357,7 +370,8 @@ export class Rider {
         const vf = dot(v, this.f), vr = dot(v, this.r);
         const landBeta = Math.atan2(Math.abs(vr), Math.abs(vf));
         tel.landed = impact;
-        if (Math.hypot(vf, vr) > 4 && landBeta > 50 * D2R) this.crash('落地方向歪了');
+        if (Math.hypot(vf, vr) > 4 && landBeta > 42 * D2R) this.crash('落地方向歪了');
+        else if (tel.grab && impact > 4) this.crash('還抓著板落地');
         else if (impact > 11) this.crash('落地太重');
         else {
           const keep = 1 - Math.min(0.35, impact * 0.025);

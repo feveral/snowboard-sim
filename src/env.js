@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   height, surface, pisteCenter, treesInRect, rocksInRect, liftX, LIFT_TOWER_SPACING,
-  gatesInRange, GATE_HALF,
+  gatesInRange, GATE_HALF, parkMask, parkAt, PARK_FEATURES, PARK_LEN, PARK_HALF, PARK_PERIOD, PARK_START, parkFeatures,
 } from './terrain.js';
 import { hash2, noise2, fbm, clamp, smoothstep } from './noise.js';
 
@@ -236,7 +236,9 @@ export class TerrainMesh {
       const k = j * GN + i;
       const h = height(x, z);
       this.h[k] = h;
-      this.pos[k * 3] = x; this.pos[k * 3 + 1] = h; this.pos[k * 3 + 2] = z;
+      // the detailed park mesh covers the park: tuck the coarse terrain just under it
+      const pm = parkMask(x, z);
+      this.pos[k * 3] = x; this.pos[k * 3 + 1] = h - 0.12 * pm; this.pos[k * 3 + 2] = z;
       this.uv[k * 2] = x / 2.6; this.uv[k * 2 + 1] = z / 2.6;
       const s = surface(x, z);
       const groom = 1 - s.off;
@@ -780,5 +782,134 @@ export class Atmosphere {
     const tod = t < 0.3 ? '早晨' : t < 0.7 ? '午間' : '黃昏';
     const wx = w < 0.25 ? '晴' : w < 0.7 ? '小雪' : '大雪起霧';
     this.label = `${tod} · ${wx}`;
+  }
+}
+
+// ------------------------------------------------------------------ terrain park
+function textPlane(text, w, h, bg, fg, font = 'bold 120px sans-serif') {
+  const c = document.createElement('canvas'); c.width = 1024; c.height = Math.round(1024 * h / w);
+  const g = c.getContext('2d');
+  g.fillStyle = bg; g.fillRect(0, 0, c.width, c.height);
+  g.fillStyle = fg; g.font = font; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(text, c.width / 2, c.height / 2);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ map: t, side: THREE.DoubleSide, roughness: 0.7, emissive: 0xffffff, emissiveMap: t, emissiveIntensity: 0.35 }));
+}
+export class ParkVisuals {
+  constructor(scene) { this.scene = scene; this.group = null; this.k = -1; this.snowMat = makeSnowMaterial(); }
+  update(cz) {
+    const k = Math.round((cz - PARK_START - PARK_LEN / 2) / PARK_PERIOD);
+    const z0 = PARK_START + k * PARK_PERIOD;
+    const near = k >= 0 && Math.abs(cz - (z0 + PARK_LEN / 2)) < PARK_LEN / 2 + 280;
+    if (!near) { if (this.group) this.group.visible = false; return; }
+    if (this.group) this.group.visible = true;
+    if (k === this.k) return;
+    this.k = k;
+    if (this.group) { this.scene.remove(this.group); this.group.traverse((o) => { if (o.geometry) o.geometry.dispose(); }); }
+    this.group = this.build(z0);
+    this.scene.add(this.group);
+  }
+  build(z0) {
+    const G = new THREE.Group();
+    // ---- fine mesh over the park (0.5 m grid) so lips and landings are crisp
+    const step = 0.5, u0 = -20, u1 = PARK_LEN + 20, half = PARK_HALF + 6;
+    const NU = Math.round((u1 - u0) / step) + 1, NX = Math.round(2 * half / step) + 1;
+    const pos = new Float32Array(NU * NX * 3), col = new Float32Array(NU * NX * 3), surf = new Float32Array(NU * NX * 3), uv = new Float32Array(NU * NX * 2);
+    const blue = [0.25, 0.45, 0.95], orange = [1.0, 0.5, 0.15];
+    for (let j = 0; j < NU; j++) {
+      const z = z0 + u0 + j * step, c = pisteCenter(z), u = z - z0;
+      for (let i = 0; i < NX; i++) {
+        const dx = -half + i * step, x = c + dx, k = j * NX + i;
+        pos[k * 3] = x; pos[k * 3 + 1] = height(x, z); pos[k * 3 + 2] = z;
+        uv[k * 2] = x / 2.6; uv[k * 2 + 1] = z / 2.6;
+        surf[k * 3] = 1; surf[k * 3 + 1] = 0; surf[k * 3 + 2] = 0;
+        let cc = [0.955, 0.97, 1.0];
+        for (const f of PARK_FEATURES) {
+          if (f.type !== 'jump') continue;
+          const lu = u - f.u, ad = Math.abs(dx - f.off);
+          if (ad > f.W / 2 + 0.3) continue;
+          if (lu > f.Lt - 0.35 && lu < f.Lt + 0.05) cc = blue;                         // lip line
+          else if (lu > f.Lt + f.T - 0.2 && lu < f.Lt + f.T + 0.2 && ad > f.W / 2 - 0.6) cc = orange; // knuckle markers
+          else if (lu > 0 && lu < f.Lt + f.T + f.Ll && ad > f.W / 2 - 0.25) cc = [0.86, 0.9, 0.97]; // side walls
+        }
+        col[k * 3] = cc[0]; col[k * 3 + 1] = cc[1]; col[k * 3 + 2] = cc[2];
+      }
+    }
+    const idx = new Uint32Array((NU - 1) * (NX - 1) * 6);
+    let n = 0;
+    for (let j = 0; j < NU - 1; j++) for (let i = 0; i < NX - 1; i++) {
+      const a = j * NX + i, b = a + 1, c = a + NX, d = c + 1;
+      idx[n++] = a; idx[n++] = c; idx[n++] = b; idx[n++] = b; idx[n++] = c; idx[n++] = d;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    g.setAttribute('surf', new THREE.BufferAttribute(surf, 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    g.setIndex(new THREE.BufferAttribute(idx, 1));
+    g.computeVertexNormals();
+    // fade the mesh edge into the surrounding terrain
+    const mesh = new THREE.Mesh(g, this.snowMat);
+    mesh.receiveShadow = true;
+    G.add(mesh);
+
+    // ---- boxes
+    const metal = new THREE.MeshStandardMaterial({ color: 0xc9d2dc, metalness: 0.85, roughness: 0.25 });
+    const sideM = new THREE.MeshStandardMaterial({ color: 0x1f8f5f, roughness: 0.6 });
+    for (const f of PARK_FEATURES) {
+      if (f.type !== 'box') continue;
+      const za = z0 + f.u + 1.2, zb = z0 + f.u + f.len;
+      const xa = pisteCenter(za) + f.off, xb = pisteCenter(zb) + f.off;
+      const ya = height(xa, za), yb = height(xb, zb);
+      const A = new THREE.Vector3(xa, ya, za), B = new THREE.Vector3(xb, yb, zb);
+      const L = A.distanceTo(B);
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.86, f.h, L), sideM);
+      const top = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.03, L), metal);
+      top.position.y = f.h / 2;
+      const box = new THREE.Group(); box.add(body, top);
+      box.position.copy(A).lerp(B, 0.5).add(new THREE.Vector3(0, -f.h / 2 + 0.01, 0));
+      box.lookAt(B.clone().add(new THREE.Vector3(0, -f.h / 2 + 0.01, 0)));
+      body.castShadow = top.castShadow = true;
+      G.add(box);
+      const sign = textPlane(f.name, 1.6, 0.6, '#1f8f5f', '#fff', 'bold 220px sans-serif');
+      const sx = pisteCenter(za - 9) + f.off + (f.off > 0 ? 1.6 : -1.6);
+      sign.position.set(sx, height(sx, za - 9) + 1.6, za - 9); sign.rotation.y = Math.PI;
+      G.add(sign);
+    }
+    // ---- size signs before each jump
+    const sizeCol = { S: '#2a9d4b', M: '#1f5fd6', L: '#111111', XL: '#d6333f' };
+    for (const f of PARK_FEATURES) {
+      if (f.type !== 'jump') continue;
+      const z = z0 + f.u - 10, x = pisteCenter(z) + f.off + (f.off > 0 ? 4.5 : -4.5);
+      const s = textPlane(f.name, 1.0, 1.0, sizeCol[f.name] || '#333', '#fff', 'bold 560px sans-serif');
+      s.position.set(x, height(x, z) + 1.5, z); s.rotation.y = Math.PI;
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.4, 6), new THREE.MeshStandardMaterial({ color: 0x333333 }));
+      post.position.set(x, height(x, z) + 0.6, z);
+      G.add(s, post);
+    }
+    // ---- entrance banner
+    const zb = z0 - 14, cb = pisteCenter(zb);
+    const banner = textPlane('TERRAIN PARK', 14, 1.8, '#111318', '#ffffff', 'bold 150px sans-serif');
+    const yb = Math.max(height(cb - 8, zb), height(cb + 8, zb)) + 5.2;
+    banner.position.set(cb, yb, zb); banner.rotation.y = Math.PI;
+    G.add(banner);
+    for (const sx of [-7.5, 7.5]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.18, 7, 8), new THREE.MeshStandardMaterial({ color: 0x23262d, roughness: 0.5 }));
+      post.position.set(cb + sx, height(cb + sx, zb) + 3.2, zb); post.castShadow = true;
+      G.add(post);
+    }
+    // ---- orange fences along both sides
+    const fenceM = new THREE.MeshStandardMaterial({ color: 0xff6a1a, roughness: 0.7, transparent: true, opacity: 0.9 });
+    for (const side of [-1, 1]) {
+      for (let u = -8; u < PARK_LEN; u += 6) {
+        const za = z0 + u, zb2 = z0 + u + 6;
+        const xa = pisteCenter(za) + side * (PARK_HALF + 2.5), xb = pisteCenter(zb2) + side * (PARK_HALF + 2.5);
+        const A = new THREE.Vector3(xa, height(xa, za) + 0.6, za), B = new THREE.Vector3(xb, height(xb, zb2) + 0.6, zb2);
+        const net = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.8, A.distanceTo(B)), fenceM);
+        net.position.copy(A).lerp(B, 0.5); net.lookAt(B);
+        G.add(net);
+      }
+    }
+    return G;
   }
 }

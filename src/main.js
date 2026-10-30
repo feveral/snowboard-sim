@@ -3,7 +3,7 @@ import { terrain, height, lodgeNear, branchAt, BRANCH_PERIOD, pisteCenter } from
 import { Rider, MODES } from './physics.js';
 import { clamp } from './noise.js';
 import {
-  makeSky, makeMountains, TerrainMesh, Props, Snowfall, Atmosphere, makeLodge, makeSign, SUN_DIR, HAZE,
+  makeSky, makeMountains, TerrainMesh, Props, Snowfall, Atmosphere, makeLodge, makeSign, SUN_DIR, HAZE, ParkVisuals,
 } from './env.js';
 import { createRiderModel } from './riderModel.js';
 import { Tracks, Spray, Powder } from './fx.js';
@@ -51,6 +51,7 @@ scene.add(sun, sun.target);
 
 const terrainMesh = new TerrainMesh(scene);
 const props = new Props(scene);
+const parkVis = new ParkVisuals(scene);
 const lodge = makeLodge(); scene.add(lodge);
 const signs = [0, 1, 2].map((i) => {
   const types = [
@@ -78,6 +79,7 @@ function rebuildWorld() {
   const { cx, cz, R } = terrainMesh.rebuild(rider.p[0], rider.p[2]);
   props.gateState = new Map(game ? game.gateDone : []);
   props.rebuild(cx, cz, R);
+  parkVis.update(rider.p[2]);
   const L = lodgeNear(cz);
   lodge.visible = !!L && Math.abs(L.z - cz) < R;
   if (L) { lodge.position.set(L.x, height(L.x, L.z) - 0.6, L.z); lodge.rotation.y = 0.15; }
@@ -117,7 +119,9 @@ game = new Game(rider, (ev) => {
 });
 
 // ------------------------------------------------------------------ input: one thumb
-const input = { steer: 0, pull: 0 };
+const input = { steer: 0, pull: 0, ollie: false };
+let ollieT = 0;
+function triggerOllie() { const now = performance.now(); if (now - ollieT > 350) { ollieT = now; input.ollie = true; } }
 const touch = { active: false, id: -1, ox: 0, oy: 0, x: 0, y: 0 };
 const keys = new Set();
 const stick = $('stick'), knob = $('knob');
@@ -132,6 +136,7 @@ ui.addEventListener('pointerdown', (e) => {
   if (touch.active) return;
   touch.active = true; touch.id = e.pointerId;
   touch.ox = touch.x = e.clientX; touch.oy = touch.y = e.clientY;
+  touch.hist = [{ y: e.clientY, t: performance.now() }];
   stick.style.display = 'block';
   stick.style.left = touch.ox + 'px'; stick.style.top = touch.oy + 'px';
   hideHint();
@@ -139,6 +144,12 @@ ui.addEventListener('pointerdown', (e) => {
 window.addEventListener('pointermove', (e) => {
   if (!touch.active || e.pointerId !== touch.id) return;
   touch.x = e.clientX; touch.y = e.clientY;
+  // quick flick upward = ollie (a slow push up is just a tuck)
+  const now = performance.now();
+  touch.hist.push({ y: e.clientY, t: now });
+  while (touch.hist.length > 2 && now - touch.hist[0].t > 90) touch.hist.shift();
+  const h0 = touch.hist[0], dtF = (now - h0.t) / 1000;
+  if (dtF > 0.015 && (e.clientY - h0.y) / dtF < -Math.max(650, scaleY() * 6.5)) triggerOllie();
   const sx = scaleX(), sy = scaleY();
   const dx = touch.x - touch.ox, dy = touch.y - touch.oy;
   if (dx > sx) touch.ox = touch.x - sx; if (dx < -sx) touch.ox = touch.x + sx;
@@ -148,7 +159,7 @@ window.addEventListener('pointermove', (e) => {
 const up = (e) => { if (e.pointerId !== touch.id) return; touch.active = false; touch.id = -1; stick.style.display = 'none'; };
 window.addEventListener('pointerup', up);
 window.addEventListener('pointercancel', up);
-window.addEventListener('keydown', (e) => { keys.add(e.key.toLowerCase()); if (e.key.startsWith('Arrow') || e.key === ' ') e.preventDefault(); hideHint(); audio.start(); });
+window.addEventListener('keydown', (e) => { if (e.key === ' ' && !e.repeat) triggerOllie(); keys.add(e.key.toLowerCase()); if (e.key.startsWith('Arrow') || e.key === ' ') e.preventDefault(); hideHint(); audio.start(); });
 window.addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 
@@ -298,9 +309,10 @@ function frame(now) {
   readInput(dt);
   acc += dt;
   let steps = 0;
-  while (acc >= PHYS_DT && steps < 12) { rider.step(PHYS_DT, input); acc -= PHYS_DT; steps++; game.update(PHYS_DT); }
+  while (acc >= PHYS_DT && steps < 12) { rider.step(PHYS_DT, input); input.ollie = false; rider.tel.ollie = rider.grounded ? false : rider.tel.ollie; acc -= PHYS_DT; steps++; game.update(PHYS_DT); }
   if (steps === 12) acc = 0;
   if (Math.hypot(rider.p[0] - terrainMesh.center.x, rider.p[2] - terrainMesh.center.z) > 20) rebuildWorld();
+  if (input.ollie && !rider.grounded) input.ollie = false;
   updateRiderVisual(dt);
   tracks.update(rider, dt);
   spray.fromRider(rider, shownMode.key, dt);

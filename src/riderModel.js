@@ -267,10 +267,18 @@ export function createRiderModel(opts = {}) {
       const sh = neck.clone().addScaledVector(spine, -0.08).addScaledVector(side, 0.2 * sg);
       let hand;
       if (s.drag > 0.01 && sg > 0) hand = sh.clone().add(V(-0.28 - 0.25 * s.drag, -0.62 * s.drag - 0.15, 0.25 * s.drag));
+      else if (s.grab > 0.05 && sg < 0) {
+        // grab: rear hand reaches down to the toe edge between the bindings
+        const rel2 = s.edge - s.lean, c2 = Math.cos(rel2), sn2 = Math.sin(rel2);
+        const target = V(-0.14 * c2 - 0.06 * sn2, -0.14 * sn2 + 0.06 * c2, -0.02);
+        hand = sh.clone().lerp(target, s.grab);
+        hand.y = Math.max(hand.y, 0.08);
+      }
       else {
         const out = 0.22 + 0.32 * s.arms;
         const sway = Math.sin(s.t * 1.7 + sg) * 0.02;
         hand = sh.clone().add(V(-0.2 - 0.1 * s.crouch, -0.42 + 0.3 * s.arms + 0.25 * s.air + sway, sg * out));
+        if (s.grab > 0.05) hand.add(V(0, 0.25 * s.grab, sg * 0.15 * s.grab)); // free arm out for style
       }
       if (s.crash > 0.5) hand = sh.clone().add(V(-0.1, 0.25, sg * 0.45));
       const elbow = ik(sh, hand, 0.29, 0.28, V(0.4, -0.5, sg * 0.8));
@@ -284,7 +292,7 @@ export function createRiderModel(opts = {}) {
       P['glove' + L].quaternion.setFromUnitVectors(UP, hand.clone().sub(elbow).normalize());
     }
   }
-  pose({ edge: 0, lean: 0, crouch: 0.3, twist: 0.5, arms: 0.3, drag: 0, crash: 0, air: 0, fore: 0, t: 0 });
+  pose({ edge: 0, lean: 0, crouch: 0.3, twist: 0.5, arms: 0.3, drag: 0, crash: 0, air: 0, fore: 0, t: 0, grab: 0 });
   return { root, pose, kind: 'board' };
 }
 

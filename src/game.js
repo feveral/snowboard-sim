@@ -39,19 +39,44 @@ export class Game {
 
     // ---- air
     if (!r.grounded) {
-      if (!this.wasAir) { this.airStartYaw = r.yaw; this.airYaw = 0; this.prevYaw = r.yaw; }
+      if (!this.wasAir) { this.airStartYaw = r.yaw; this.airYaw = 0; this.prevYaw = r.yaw; this.grabT = 0; this.ollied = !!r.tel.ollie; this.airTravel = r.travel; }
       this.airYaw += r.yaw - this.prevYaw; this.prevYaw = r.yaw;
+      if (r.tel.grab) this.grabT += dt;
       this.wasAir = true;
     } else if (this.wasAir) {
       this.wasAir = false;
       const air = r.airT;
       if (air > 0.35) {
         const spin = Math.round(Math.abs(this.airYaw) * D / 180) * 180;
-        let label = `騰空 ${air.toFixed(1)}s`;
+        const parts = [];
         let pts = air * 250;
-        if (spin >= 180) { label = `${spin}° ${label}`; pts += spin * 2; }
-        this.add(pts, label, 'air');
+        if (spin >= 180) {
+          const fs = this.airYaw * this.airTravel > 0; // chest opens down the hill = frontside (regular)
+          parts.push(`${fs ? 'FS' : 'BS'} ${spin}`);
+          pts += spin * 2.2;
+        }
+        if (this.grabT > 0.25) {
+          const grabs = ['Indy', 'Melon', 'Mute', 'Tail', 'Nose', 'Stalefish'];
+          parts.push(grabs[Math.floor((this.grabT * 7 + spin / 180) % grabs.length)] + ' Grab');
+          pts += 150 + this.grabT * 300;
+        }
+        if (!parts.length) parts.push(this.ollied && air < 0.7 ? 'Ollie' : 'Air');
+        this.add(pts, `${parts.join(' ')} · ${air.toFixed(1)}s`, 'air');
         this.combo++;
+      }
+    }
+
+    // ---- boxes: 50-50 (board straight) or boardslide (board across)
+    if (r.grounded && r.tel.onBox) {
+      if (!this.slide) this.slide = { t: 0, dist: 0, across: 0 };
+      this.slide.t += dt; this.slide.dist += r.tel.speed * dt;
+      if (r.tel.betaS > 0.9) this.slide.across += dt;
+    } else if (this.slide) {
+      const S = this.slide; this.slide = null;
+      if (S.t > 0.25 && S.dist > 1.5) {
+        const bs = S.across > S.t * 0.5;
+        this.combo++;
+        this.add(S.dist * (bs ? 60 : 35), `${bs ? 'Boardslide' : '50-50'} ${S.dist.toFixed(1)}m`, 'air');
       }
     }
 

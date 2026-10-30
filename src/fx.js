@@ -123,7 +123,7 @@ export class Tracks {
     const L = 1.5, W = 0.27;
     const w = L * sk + W * ck;
     const baseContact = 1 - smoothstep(0.2, 0.75, th) * (1 - sk);
-    const a = Math.min(1, (0.32 + 0.6 * Math.min(1, sk / 0.25) + 0.35 * t.off) * baseContact);
+    const a = Math.min(0.75, (0.3 + 0.45 * Math.min(1, sk / 0.25) + 0.3 * t.off) * baseContact);
     if (a > 0.04) {
       const vx = rider.v[0], vz = rider.v[2], vl = Math.hypot(vx, vz) || 1;
       this.scrape.add(p[0], p[2], -vz / vl, vx / vl, w, n, a, st);

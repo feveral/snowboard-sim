@@ -93,3 +93,14 @@ for (const dir of [1, -1]) run(`brake ${dir > 0 ? 'right(toe)' : 'left(heel)'} 3
   if (t < 6) return { steer: dir * 0.3, pull: 1 };
   return { steer: 0, pull: 0 };
 }, 300);
+// 9. Ground 180: carve on the heel edge, flatten and twist far one way, release -> riding switch, then
+//    carve heelside again (heel -> heel, other foot forward)
+run('ground 180 heel->heel (switch)', 10, (r, t, st) => {
+  st.log = 0.5;
+  if (t < 3) return { steer: -0.5, pull: 0 };        // heelside turn (regular, turning left)
+  if (t < 3.2) return { steer: 0, pull: 0 };          // flatten
+  if (st.y0 === undefined) { st.y0 = r.yaw; st.tr0 = r.travel; }
+  if (Math.abs(r.yaw - st.y0) < Math.PI * 0.95 && t < 6) return { steer: 0.9, pull: 0.5 };   // twist
+  if (st.done === undefined) { st.done = t; console.log(`  twisted ${(Math.abs(r.yaw - st.y0) * 57.3).toFixed(0)}° in ${(t - 3.2).toFixed(2)}s, travel ${st.tr0} -> ${r.travel}`); }
+  return { steer: t < st.done + 1.2 ? 0 : 0.5, pull: 0 };  // release, then turn right = heelside when switch
+}, 1000);

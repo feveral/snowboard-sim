@@ -154,6 +154,7 @@ class Bot {
     this.steerS += clamp(target - this.steerS, -2.6 * dt, 2.6 * dt);
     this.input.steer = this.steerS;
     this.input.pull = pull * (Math.abs(this.steerS) > 0.2 ? 1 : 0.5);
+    if (this.input.pull > 0.2) this.input.steer = clamp(this.input.steer, -0.5, 0.5); // brake, don't spin
   }
 }
 

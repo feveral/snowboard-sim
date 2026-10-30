@@ -183,7 +183,11 @@ export class Rider {
     if (refF > 0.4) this.travel = 1; else if (refF < -0.4) this.travel = -1;
     let betaS = Math.atan2(this.travel * refR, Math.abs(refF)); // + = moving to the right of the nose
     const sideways = smoothstep(0.95, 1.3, Math.abs(betaS));     // ~55°..75°
-    if (sideways > 0.5 && Math.abs(steer) > 0.3 && Math.abs(refF) < 0.4 * Math.hypot(refF, refR)) {
+    // twist: pull down AND push far to one side = keep rotating the board that way on a flat base
+    // (ground 180/360, switching which foot leads). Light pull or small sideways = brake/side-slip.
+    const twist = this.grounded && pull > 0.2 && Math.abs(steer) >= 0.55;
+    tel.twist = twist;
+    if (!twist && sideways > 0.5 && Math.abs(steer) > 0.3 && Math.abs(refF) < 0.4 * Math.hypot(refF, refR)) {
       // board across the slide: the end on the side you push becomes the new nose
       // (right end of the board = the one on the right of the travel direction)
       const rightEnd = refR > 0 ? -1 : 1; // f lies to the right of motion when motion is to the board's left
@@ -196,13 +200,19 @@ export class Rider {
     // what the rider's body tries to do with the board's rotation
     const betaTarget = -this.lastPivotDir * brake * 1.48; // brake: swing the nose toward the steer side, up to ~85°
     let wBody = clamp(4.0 * (betaS - betaTarget), -P.pivotRate, P.pivotRate);
-    const bodyGain = brake > 0.05 ? 1 : smoothstep(0.07, 0.22, Math.abs(betaS)) * (0.35 + 0.6 * assist); // re-align after a slide
+    // after a slide the body lines the board up with the NEAREST end (nose or tail), so a
+    // board that's been twisted past 90° simply continues switch instead of being pulled back
+    let bodyGain = brake > 0.05 ? 1 : smoothstep(0.07, 0.22, Math.abs(betaS)) * (0.25 + 0.6 * assist);
+    if (twist) {
+      wBody = Math.sign(steer) * (2.4 + 3.2 * (Math.abs(steer) - 0.55) / 0.45); // up to ~5.6 rad/s
+      bodyGain = 1;
+    }
 
     const surfNow = T.surface(p[0], p[2]);
     const onBox = this.grounded && !!surfNow.box;
     tel.onBox = onBox;
     let edgeTarget = steer * this.travel * P.maxEdge;
-    if (onBox) edgeTarget = 0; // flat base on the box: slide (50-50 or boardslide with pull)
+    if (onBox || twist) edgeTarget = 0; // flat base: box slides and ground spins
     else if (brake > 0.05) {
       // engage the trailing (uphill) edge: opposite to the board's sideways motion
       const slideR = dot(v, this.r);
@@ -222,7 +232,7 @@ export class Rider {
       if (this.grounded && Math.abs(edgeTarget) > 0.01) {
         const se = Math.sign(edgeTarget);
         const aE = Math.max(0, se * this.aLatS);
-        const cap = Math.atan2(aE, Math.max(2, this.load)) + 0.42 + 0.22 * assist;
+        const cap = Math.atan2(aE, Math.max(2, this.load)) + 0.3 + 0.14 * assist; // angulation ≈ 17–25°
         edgeTarget = se * Math.min(Math.abs(edgeTarget), cap);
       }
     }
@@ -277,11 +287,12 @@ export class Rider {
       const R = Math.max(rGeo, rBal);
       const wCarve = eSign * carveEff * vf0 / R;
       // the edge only steers while it's biting (small slip) and loaded
-      const bite = carveEff * (1 - smoothstep(0.12, 0.45, slip)) * clamp(N / G, 0, 1.5) * (1 - 0.85 * brake);
+      const bend = smoothstep(3, 8, speed0);   // too slow: the board doesn't bend into its arc, it just skids round
+      const bite = carveEff * bend * (1 - smoothstep(0.12, 0.45, slip)) * clamp(N / G, 0, 1.5) * (1 - 0.85 * brake);
       const kS = P.kSidecut * bite;
       // rider torque: weaker when the edge is locked in and the board is heavily loaded
       const eff = (1 - 0.55 * Math.sin(th) * bite) / (0.45 + 0.55 * clamp(N / G, 0.2, 2));
-      const wSlow = steer * 1.4 * Math.max(0, 1 - speed0 / 7) * (1 - sideways);
+      const wSlow = steer * 1.3 * Math.max(0, 1 - speed0 / 7) * (1 - sideways);
       const wRider = wBody * bodyGain + wSlow;
       const kR = P.kRider * eff * (brake > 0.05 || Math.abs(wSlow) > 0.05 || bodyGain > 0.05 ? 1 : 0.35);
       const wWant = (kS * wCarve + kR * wRider) / (kS + kR + 1e-6);
@@ -380,14 +391,14 @@ export class Rider {
       tel.omegaCarve = wCarve; tel.omegaPivot = wPivot; tel.load = N / G;
       tel.radius = Math.abs(w) > 0.03 ? speed / Math.abs(w) : Infinity;
       tel.ice = surf.ice; tel.off = surf.off;
-      tel.carveQ = clamp(carveEff * (1 - this.betaS / (14 * D2R)) * (1 - 0.8 * pivotShare), 0, 1);
+      tel.carveQ = clamp(carveEff * smoothstep(3.5, 8, speed) * (1 - this.betaS / (14 * D2R)) * (1 - 0.8 * pivotShare), 0, 1);
 
       const bd = this.betaS / D2R;
       let m;
       if (speed < 1.2) m = MODES.stop;
       else if (bd < 3.5) {
-        if (th > 13 * D2R && Math.abs(wCarve) > 0.1 && pivotShare < 0.45) m = MODES.carve;
-        else if (pivotShare >= 0.45 && Math.abs(w) > 0.15) m = MODES.semicarve;
+        if (th > 13 * D2R && Math.abs(wCarve) > 0.1 && pivotShare < 0.45 && speed > 5 && bite > 0.4) m = MODES.carve;
+        else if ((pivotShare >= 0.45 || (speed <= 5 && th > 13 * D2R)) && Math.abs(w) > 0.15) m = MODES.semicarve; // pivoting / too slow to carve
         else m = MODES.glide;
       } else if (bd < 10) m = MODES.semicarve;
       else if (bd < 35) m = MODES.skid;

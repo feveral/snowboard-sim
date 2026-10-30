@@ -216,6 +216,8 @@ const hud = {
 };
 let shownMode = MODES.stop, pendingMode = null, pendingT = 0, hudT = 0;
 function modeLabel(m) {
+  if (rider.tel.twist) return { text: '轉板 Pivot', cls: 'm-semicarve' };
+  if (m === MODES.scrape && Math.abs(rider.edge) < 0.09) return { text: '橫滑 Sideslide', cls: 'm-scrape' };
   if (m === MODES.scrape || (m === MODES.skid && rider.tel.brake > 0.3)) {
     const heel = rider.edge < 0;
     return { text: heel ? '後刃推坡 Heelside' : '前刃推坡 Toeside', cls: 'm-scrape' };
@@ -239,7 +241,7 @@ function updateHUD(dt) {
   hud.bar.style.width = Math.round(t.carveQ * 100) + '%';
   const e = rider.edge * D;
   hud.edge.textContent = Math.abs(e).toFixed(0) + '°';
-  hud.edgeSide.textContent = Math.abs(e) < 3 ? 'FLAT' : e > 0 ? 'TOE 前刃' : 'HEEL 後刃';
+  hud.edgeSide.textContent = (Math.abs(e) < 3 ? 'FLAT' : e > 0 ? 'TOE 前刃' : 'HEEL 後刃') + (rider.travel < 0 ? ' · 反腳' : '');
   hud.needle.style.transform = `rotate(${e}deg)`;
   hud.beta.textContent = (t.betaS * D).toFixed(0) + '°';
   hud.g.textContent = Math.min(9.9, Math.abs(t.latG)).toFixed(2) + 'g';

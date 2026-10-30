@@ -66,6 +66,19 @@ export class Game {
       }
     }
 
+    // ---- ground spins (twisting the board on the snow, switching lead foot)
+    if (r.grounded && r.tel.twist) {
+      if (!this.gspin) this.gspin = { yaw: r.yaw, acc: 0, prev: r.yaw };
+      this.gspin.acc += Math.abs(r.yaw - this.gspin.prev); this.gspin.prev = r.yaw;
+    } else if (this.gspin) {
+      const deg = this.gspin.acc * D; this.gspin = null;
+      if (deg > 150) {
+        const n = Math.round(deg / 180) * 180;
+        this.combo++;
+        this.add(n * 1.5, `${n >= 360 ? 'Butter' : 'Ground'} ${n} → ${r.travel > 0 ? '正腳' : '反腳 Switch'}`, 'air');
+      }
+    }
+
     // ---- boxes: 50-50 (board straight) or boardslide (board across)
     if (r.grounded && r.tel.onBox) {
       if (!this.slide) this.slide = { t: 0, dist: 0, across: 0 };

@@ -93,14 +93,19 @@ for (const dir of [1, -1]) run(`brake ${dir > 0 ? 'right(toe)' : 'left(heel)'} 3
   if (t < 6) return { steer: dir * 0.3, pull: 1 };
   return { steer: 0, pull: 0 };
 }, 300);
-// 9. Ground 180: carve on the heel edge, flatten and twist far one way, release -> riding switch, then
-//    carve heelside again (heel -> heel, other foot forward)
-run('ground 180 heel->heel (switch)', 10, (r, t, st) => {
-  st.log = 0.5;
-  if (t < 3) return { steer: -0.5, pull: 0 };        // heelside turn (regular, turning left)
-  if (t < 3.2) return { steer: 0, pull: 0 };          // flatten
-  if (st.y0 === undefined) { st.y0 = r.yaw; st.tr0 = r.travel; }
-  if (Math.abs(r.yaw - st.y0) < Math.PI * 0.95 && t < 6) return { steer: 0.9, pull: 0.5 };   // twist
-  if (st.done === undefined) { st.done = t; console.log(`  twisted ${(Math.abs(r.yaw - st.y0) * 57.3).toFixed(0)}° in ${(t - 3.2).toFixed(2)}s, travel ${st.tr0} -> ${r.travel}`); }
-  return { steer: t < st.done + 1.2 ? 0 : 0.5, pull: 0 };  // release, then turn right = heelside when switch
+// 9. Toeside side-slip held for 4 s: the edge must stay toeside the whole time; release: stays across
+for (const dir of [1, -1]) run(`${dir > 0 ? 'toeside' : 'heelside'} side-slip hold + release`, 10, (r, t, st) => {
+  if (st.flips === undefined) { st.flips = 0; st.last = 0; st.log = 0; }
+  if (t < 2.5) return { steer: 0, pull: -1 };
+  if (t < 6.5) {
+    const e = Math.sign(r.edge);
+    if (t > 3 && st.last && e && e !== st.last) st.flips++;
+    if (e) st.last = e;
+    return { steer: dir * 0.4, pull: 0.7 };
+  }
+  if (Math.abs(t - 6.5) < 0.01) console.log(`  edge flips while braking: ${st.flips}, edge ${(r.edge * 57.3).toFixed(0)}° (${r.edge > 0 ? 'toe' : 'heel'})`);
+  if (Math.abs(t - 8.5) < 0.01) console.log(`  2 s after release: slip ${(r.tel.betaS * 57.3).toFixed(0)}° (should stay across), edge ${(r.edge * 57.3).toFixed(0)}°`);
+  if (t > 8.5) return { steer: dir * 0.6, pull: 0 };  // push to ride away
+  if (Math.abs(t - 9.99) < 0.01) console.log(`  after steering away: slip ${(r.tel.betaS * 57.3).toFixed(0)}°, ${r.mode.key}`);
+  return { steer: 0, pull: 0 };
 }, 1000);

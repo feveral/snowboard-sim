@@ -78,6 +78,7 @@ export class Rider {
     this.crashReason = '';
     this.airT = 0;
     this.lastPivotDir = 1;
+    this.rideAway = 0; this.brakeEdge = 0;
     this.travel = 1;         // +1 riding forward, -1 riding switch (with hysteresis)
     this.omega = 0;          // yaw rate, + = turning right
     this.load = G;           // normal acceleration (smoothed)
@@ -180,57 +181,78 @@ export class Rider {
       const wgt = (1.5 - spA) / 1.5 * 1.5 / gl;
       refF += dot(gt0, this.f) * wgt; refR += dot(gt0, this.r) * wgt;
     }
-    if (refF > 0.4) this.travel = 1; else if (refF < -0.4) this.travel = -1;
+    // which end leads: don't re-decide while braking (the board is swung across on purpose)
+    if (!(pull > 0.05 && this.brakeEdge)) { if (refF > 0.4) this.travel = 1; else if (refF < -0.4) this.travel = -1; }
     let betaS = Math.atan2(this.travel * refR, Math.abs(refF)); // + = moving to the right of the nose
     const sideways = smoothstep(0.95, 1.3, Math.abs(betaS));     // ~55°..75°
-    // twist: pull down AND push far to one side = keep rotating the board that way on a flat base
-    // (ground 180/360, switching which foot leads). Light pull or small sideways = brake/side-slip.
-    // needs a deliberate, held gesture (pull well down + drag almost all the way) so it doesn't fire by accident
-    const twistWant = this.grounded && pull > 0.3 && Math.abs(steer) >= 0.8;
-    this.twistT = twistWant ? (this.twistT || 0) + dt : 0;
-    const twist = twistWant && this.twistT > 0.15;
-    tel.twist = twist;
-    if (!twist && sideways > 0.5 && Math.abs(steer) > 0.3 && Math.abs(refF) < 0.4 * Math.hypot(refF, refR)) {
-      // board across the slide: the end on the side you push becomes the new nose
-      // (right end of the board = the one on the right of the travel direction)
-      const rightEnd = refR > 0 ? -1 : 1; // f lies to the right of motion when motion is to the board's left
-      this.travel = Math.sign(steer) * rightEnd;
-      betaS = Math.atan2(this.travel * refR, Math.abs(refF));
-    }
+    // No automatic re-orienting: the board only turns because of the edge (carving), the
+    // rider's input, or the snow. The brake edge is chosen when you start braking and stays.
+    const twistWant = false, twist = false;
+    tel.twist = false;
     const brake = Math.max(0, pull);
     if (Math.abs(steer) > 0.15) this.lastPivotDir = Math.sign(steer);
     const assist = this.assist;
-    // what the rider's body tries to do with the board's rotation
-    const betaTarget = -this.lastPivotDir * brake * 1.48; // brake: swing the nose toward the steer side, up to ~85°
-    let wBody = clamp(4.0 * (betaS - betaTarget), -P.pivotRate, P.pivotRate);
-    // after a slide the body lines the board up with the NEAREST end (nose or tail), so a
-    // board that's been twisted past 90° simply continues switch instead of being pulled back
-    let bodyGain = brake > 0.05 ? 1 : smoothstep(0.07, 0.22, Math.abs(betaS)) * (0.25 + 0.6 * assist);
-    if (twist) {
-      wBody = Math.sign(steer) * (1.5 + 1.1 * (Math.abs(steer) - 0.8) / 0.2); // 1.5–2.6 rad/s: a 180 takes ~1.3–2 s
-      bodyGain = 1;
+    const grL = n0[0] * n0[1] * this.r[0] + (n0[1] * n0[1] - 1) * this.r[1] + n0[2] * n0[1] * this.r[2]; // gravity across the board
+    if (brake > 0.05 && this.grounded) {
+      if (!this.brakeEdge) {
+        // latch the edge for this side-slip: the steer side picks it (down-right = toeside when
+        // riding regular), otherwise keep the edge you're on, otherwise the uphill edge
+        // remember which way you were going: the board swings across THAT line, so the stop
+        // ends up square to your path instead of curling round uphill
+        this.brakeYaw = spA > 1.5 ? Math.atan2(v[0], v[2]) : Math.atan2(n0[0], n0[2]);
+        this.brakeEdge = Math.abs(steer) > 0.15 ? Math.sign(steer) * this.travel
+          : Math.abs(this.edge) > 0.12 ? Math.sign(this.edge)
+          : (-Math.sign(grL) || 1);
+      }
+    } else if (Math.abs(betaS) < 0.45 || !this.grounded) this.brakeEdge = 0; // back in line: release the latch
+    const latched = this.brakeEdge || 0;
+    // body rotation the rider asks for
+    let wBody = 0, bodyGain = 0;
+    // small slips only (a sketchy landing, a washed-out carve): the body tidies the board up a little.
+    // Never touches a deliberate side-slip (> ~25°).
+    if (this.grounded && !latched && brake <= 0.05 && Math.abs(betaS) > 0.07 && Math.abs(betaS) < 0.45) {
+      wBody = clamp(3 * betaS, -1.2, 1.2);
+      bodyGain = (1 - smoothstep(0.3, 0.45, Math.abs(betaS))) * (0.3 + 0.4 * assist);
     }
+    if (brake > 0.05 && latched) {
+      // swing the board across so the latched edge is the uphill (trailing) one
+      // board goes fully across the travel direction; how far you pull sets how hard the edge digs
+      const betaTarget = -latched * this.travel * 1.48 * smoothstep(0.05, 0.25, brake);
+      // nearly stopped: hold the board where it is (no more swinging round)
+      const noseYaw = this.yaw + (this.travel < 0 ? Math.PI : 0);
+      const betaFixed = Math.atan2(Math.sin(noseYaw - this.brakeYaw), Math.cos(noseYaw - this.brakeYaw));
+      wBody = clamp(4.0 * (betaFixed - betaTarget), -P.pivotRate, P.pivotRate) * smoothstep(0.8, 2.0, spA);
+      bodyGain = 1;
+    } else if (this.grounded && Math.abs(steer) > 0.15 && (sideways > 0.3 || this.rideAway)) {
+      // sideways after a side-slip: push left/right to drop that end of the board downhill and
+      // ride away; keeps swinging until the board points down the hill
+      const fl = Math.atan2(n0[0], n0[2]);                       // downhill heading
+      if (!this.rideAway) {
+        this.rideAway = Math.sign(steer);
+        const srx = -Math.cos(fl), srz = Math.sin(fl);             // screen right when looking downhill
+        const endR = Math.sign(this.f[0] * srx + this.f[2] * srz) || 1;
+        this.rideEnd = this.rideAway > 0 ? endR : -endR;           // the board end on the side you pushed
+      }
+      const endYaw = this.yaw + (this.rideEnd < 0 ? Math.PI : 0);
+      const err = Math.atan2(Math.sin(endYaw - fl), Math.cos(endYaw - fl));
+      wBody = clamp(2.5 * err, -1.8, 1.8);                         // swing that end down the fall line
+      bodyGain = 1;
+      if (Math.abs(err) < 0.2) this.rideAway = 0;
+    }
+    if (this.rideAway && (Math.abs(steer) < 0.15 || brake > 0.05 || !this.grounded)) this.rideAway = 0;
 
     const surfNow = T.surface(p[0], p[2]);
     const onBox = this.grounded && !!surfNow.box;
     tel.onBox = onBox;
     let edgeTarget = steer * this.travel * P.maxEdge;
-    if (onBox || twistWant) edgeTarget = 0; // flat base: box slides and ground spins (no braking edge)
-    else if (brake > 0.05) {
-      // engage the trailing (uphill) edge: opposite to the board's sideways motion
-      const slideR = dot(v, this.r);
-      const grL = n0[0] * n0[1] * this.r[0] + (n0[1] * n0[1] - 1) * this.r[1] + n0[2] * n0[1] * this.r[2]; // gravity across the board
-      const sgn = Math.abs(slideR) > 0.4 ? -Math.sign(slideR)
-        : spA < 1.5 ? (-Math.sign(grL) || 1)
-        : (Math.sign(wBody) || this.lastPivotDir) * this.travel;
-      const be = sgn * (8 + 36 * brake) * (Math.PI / 180);
-      edgeTarget += (be - edgeTarget) * smoothstep(0.05, 0.3, brake);
+    if (onBox) edgeTarget = 0; // flat base on boxes
+    else if (brake > 0.05 && latched) {
+      edgeTarget = latched * (8 + 36 * brake) * (Math.PI / 180);
+    } else if (latched && Math.abs(betaS) > 0.45) {
+      // let go mid side-slip: stay on that edge (lightly) until you steer away
+      edgeTarget = latched * 12 * (Math.PI / 180) * (1 - Math.min(1, Math.abs(steer) * 1.4));
     } else {
-      if (sideways > 0) {
-        const uphill = -Math.sign(dot(v, this.r)) || 1;
-        const ss = uphill * Math.abs(steer) * 14 * (Math.PI / 180);
-        edgeTarget += (ss - edgeTarget) * sideways;
-      }
+      edgeTarget *= this.rideAway ? 0.05 : 1 - 0.9 * sideways; // board across the slide: keep it flat while you swing it round
       // balance: you can only lean as far as the snow pushes back (plus angulation at the hips/knees)
       if (this.grounded && Math.abs(edgeTarget) > 0.01) {
         const se = Math.sign(edgeTarget);
@@ -296,7 +318,7 @@ export class Rider {
       const kS = P.kSidecut * bite;
       // rider torque: weaker when the edge is locked in and the board is heavily loaded
       const eff = (1 - 0.55 * Math.sin(th) * bite) / (0.45 + 0.55 * clamp(N / G, 0.2, 2));
-      const wSlow = steer * 1.3 * Math.max(0, 1 - speed0 / 7) * (1 - sideways);
+      const wSlow = bodyGain > 0 ? 0 : steer * 1.3 * Math.max(0, 1 - speed0 / 7) * (1 - sideways);
       const wRider = wBody * bodyGain + wSlow;
       const kR = P.kRider * eff * (brake > 0.05 || Math.abs(wSlow) > 0.05 || bodyGain > 0.05 ? 1 : 0.35);
       const wWant = (kS * wCarve + kR * wRider) / (kS + kR + 1e-6);

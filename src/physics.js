@@ -186,9 +186,9 @@ export class Rider {
     // twist: pull down AND push far to one side = keep rotating the board that way on a flat base
     // (ground 180/360, switching which foot leads). Light pull or small sideways = brake/side-slip.
     // needs a deliberate, held gesture (pull well down + drag almost all the way) so it doesn't fire by accident
-    const twistWant = this.grounded && pull > 0.45 && Math.abs(steer) >= 0.8;
+    const twistWant = this.grounded && pull > 0.3 && Math.abs(steer) >= 0.8;
     this.twistT = twistWant ? (this.twistT || 0) + dt : 0;
-    const twist = twistWant && this.twistT > 0.25;
+    const twist = twistWant && this.twistT > 0.15;
     tel.twist = twist;
     if (!twist && sideways > 0.5 && Math.abs(steer) > 0.3 && Math.abs(refF) < 0.4 * Math.hypot(refF, refR)) {
       // board across the slide: the end on the side you push becomes the new nose
@@ -215,7 +215,7 @@ export class Rider {
     const onBox = this.grounded && !!surfNow.box;
     tel.onBox = onBox;
     let edgeTarget = steer * this.travel * P.maxEdge;
-    if (onBox || twist) edgeTarget = 0; // flat base: box slides and ground spins
+    if (onBox || twistWant) edgeTarget = 0; // flat base: box slides and ground spins (no braking edge)
     else if (brake > 0.05) {
       // engage the trailing (uphill) edge: opposite to the board's sideways motion
       const slideR = dot(v, this.r);
@@ -252,6 +252,7 @@ export class Rider {
       for (let i = 0; i < 3; i++) v[i] += n[i] * pop;
       p[1] += 0.03;
       this.grounded = false; this.airT = 0; this.ollieCool = 0.45;
+      if (Math.abs(steer) > 0.4) this.omega = steer * 6.2; // pre-wound shoulders: hop 180
       tel.ollie = true;
     }
 
@@ -335,7 +336,8 @@ export class Rider {
       const grip = beta < 3 * b0;
       // snow plough: sliding sideways pushes a wall of snow (≈ v_lat²), stronger in soft snow
       if (beta > 0.12) {
-        const pl = Math.min(Math.abs(vr), P.plough * (1 + 1.5 * surf.off) * vr * vr * dt);
+        const dig = 0.12 + 0.88 * smoothstep(0.05, 0.4, th);
+        const pl = Math.min(Math.abs(vr), P.plough * dig * (1 + 1.5 * surf.off) * vr * vr * dt);
         vr -= Math.sign(vr) * pl;
         const lossF = Math.min(Math.abs(vf), 0.25 * pl);
         vf -= Math.sign(vf) * lossF;
@@ -428,7 +430,14 @@ export class Rider {
       if (Math.abs(steer) > 0.1) {
         const wT = steer * (tel.grab ? 4.6 : 6.6);
         this.omega += clamp(wT - this.omega, -16 * dt, 16 * dt);
-      } else this.omega *= Math.exp(-(6 + 4 * this.assist) * dt); // open up / spot the landing
+      } else {
+        // let go: keep the spin and spot the landing on the nearest end (nose or tail)
+        const yawV = Math.atan2(v[0], v[2]);
+        const d = Math.atan2(Math.sin(this.yaw - yawV), Math.cos(this.yaw - yawV));
+        const tgt = Math.abs(d) > Math.PI / 2 ? Math.sign(d) * Math.PI : 0;
+        const wT = clamp(5 * (d - tgt), -6.6, 6.6);
+        this.omega += clamp(wT - this.omega, -14 * dt, 14 * dt) * (0.45 + 0.55 * this.assist);
+      }
       this.yaw -= this.omega * dt;
       this.load = 0; this.aLatS = 0;
       p[0] += v[0] * dt; p[1] += v[1] * dt; p[2] += v[2] * dt;

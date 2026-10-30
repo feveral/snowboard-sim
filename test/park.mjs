@@ -13,7 +13,7 @@ function ride(off, v0, ollieAtLip = false, spin = 0) {
     const aim = pisteCenter(r.p[2] + 12) + off;
     const head = Math.atan2(r.v[0], r.v[2]), want = Math.atan2(aim - r.p[0], 12);
     let steer = r.grounded ? Math.max(-0.35, Math.min(0.35, -(want - head) * 2.5)) : 0;
-    if (!r.grounded && spin && spun < spin) { steer = 1; }
+    if (!r.grounded && spin && spun < spin * 0.75) { steer = 1; } // let go past 270° and spot the landing
     const inp = { steer, pull: 0, ollie: false };
     const wasG = r.grounded, yaw0 = r.yaw;
     r.step(DT, inp);

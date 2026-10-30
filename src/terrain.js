@@ -73,7 +73,7 @@ export function height(x, z) {
   // valley: sides rise away from the nearest piste (saturating); width breathes
   const W = 58 + 18 * Math.sin(z / 260 + 1.1);
   const q = dx / W;
-  base += 9.5 * (q * q) / (1 + q * 0.35);
+  base += 9.5 * (q * q) / (1 + q * 0.35) - Math.max(0, dx - 160) * 0.12; // far side slopes level out a bit
   const pm = parkMask(x, z);
   if (pm >= 1) return base + parkFeatures(x, z);
   let h = 0;
@@ -340,3 +340,11 @@ export function treeHit(x, z, rr) {
 }
 
 export const terrain = { height, normal, surface, treeHit, pisteCenter };
+
+// rough share of ground covered by forest (for far-away rendering)
+export function forestDensity(x, z) {
+  const dx = pisteDist(x, z);
+  let dens = 0.005 + 0.64 * smoothstep(17, 36, dx);
+  dens *= 0.45 + 0.9 * Math.max(0, noise2(x / 70, z / 70) + 0.45);
+  return Math.min(1, dens * 1.25);
+}

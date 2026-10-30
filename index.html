@@ -15,6 +15,7 @@
          user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   #ui { position: fixed; inset: 0; touch-action: none; }
+  #grade { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 50% 45%, rgba(0,0,0,0) 55%, rgba(10,20,45,0.28) 100%); }
   .tl { position: absolute; left: calc(12px + env(safe-area-inset-left)); top: calc(10px + env(safe-area-inset-top)); }
   .tr { position: absolute; right: calc(12px + env(safe-area-inset-right)); top: calc(10px + env(safe-area-inset-top)); display: flex; gap: 8px; }
   .panel { background: var(--glass); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-radius: 14px; border: 1px solid rgba(255,255,255,0.7); box-shadow: 0 2px 12px rgba(30,50,80,0.12); }
@@ -89,6 +90,7 @@
 </head>
 <body>
 <canvas id="c"></canvas>
+<div id="grade"></div>
 <div id="ui">
   <div class="tl panel" id="speedbox">
     <div><span id="speed">0</span><span class="unit">km/h</span></div>

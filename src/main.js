@@ -1,9 +1,9 @@
 import * as THREE from 'three';
-import { terrain, height, lodgeNear, branchAt, BRANCH_PERIOD, pisteCenter } from './terrain.js';
+import { terrain, height, lodgeNear, branchAt, BRANCH_PERIOD, pisteCenter, forestDensity } from './terrain.js';
 import { Rider, MODES } from './physics.js';
 import { clamp } from './noise.js';
 import {
-  makeSky, makeMountains, TerrainMesh, Props, Snowfall, Atmosphere, makeLodge, makeSign, SUN_DIR, HAZE, ParkVisuals,
+  makeSky, makeMountains, TerrainMesh, Props, Snowfall, Atmosphere, makeLodge, makeSign, SUN_DIR, HAZE, ParkVisuals, FarTerrain,
 } from './env.js';
 import { createRiderModel } from './riderModel.js';
 import { Tracks, Spray, Powder } from './fx.js';
@@ -20,12 +20,12 @@ const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isTouch ? 2 : 1.5));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 1.0;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(HAZE.clone(), 60, 330);
+scene.fog = new THREE.Fog(HAZE.clone(), 80, 900);
 const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 2600);
 
 function resize() {
@@ -39,7 +39,7 @@ window.addEventListener('resize', resize);
 resize();
 
 const sky = makeSky(); scene.add(sky);
-const mountains = makeMountains(); scene.add(mountains);
+const mountains = null; // distant ranges are painted into the sky dome (see makeSky)
 const hemi = new THREE.HemisphereLight(0xdcebff, 0x7d90ab, 1.15);
 scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff4e2, 2.6);
@@ -50,6 +50,8 @@ sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.04;
 scene.add(sun, sun.target);
 
 const terrainMesh = new TerrainMesh(scene);
+const farTerrain = new FarTerrain(scene);
+window.__far = farTerrain;
 const props = new Props(scene);
 const parkVis = new ParkVisuals(scene);
 const lodge = makeLodge(); scene.add(lodge);
@@ -78,8 +80,9 @@ const audio = new SnowAudio();
 function rebuildWorld() {
   const { cx, cz, R } = terrainMesh.rebuild(rider.p[0], rider.p[2]);
   props.gateState = new Map(game ? game.gateDone : []);
-  props.rebuild(cx, cz, R);
+  props.rebuild(cx, cz, R, rider.p[0], rider.p[2]);
   parkVis.update(rider.p[2]);
+  farTerrain.update(rider.p[0], rider.p[2], forestDensity);
   const L = lodgeNear(cz);
   lodge.visible = !!L && Math.abs(L.z - cz) < R;
   if (L) { lodge.position.set(L.x, height(L.x, L.z) - 0.6, L.z); lodge.rotation.y = 0.15; }
@@ -289,7 +292,6 @@ function updateCamera(dt) {
   const fov = camera.userData.baseFov + Math.min(12, sp * 0.33);
   if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * Math.min(1, dt * 2); camera.updateProjectionMatrix(); }
   sky.position.copy(camera.position);
-  mountains.position.set(camera.position.x * 0.97, camera.position.y * 0.9 - 60, camera.position.z * 0.97);
   // shadows follow the rider
   sun.target.position.set(p[0], p[1], p[2]).addScaledVector(camDir, 14);
   sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 120);
@@ -344,4 +346,4 @@ function frame(now) {
   renderer.render(scene, camera);
 }
 requestAnimationFrame(frame);
-window.__game = { rider, input, keys, game, atmos, tracks, camera, scene, crowd };
+window.__game = { rider, input, keys, game, atmos, tracks, camera, scene, crowd, resetCam: () => { camInit = false; rebuildWorld(); } };

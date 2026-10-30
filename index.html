@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#d4e3f2">
+<title>Snowboard Sim</title>
+<style>
+  :root { --ink: #0f1b2d; --glass: rgba(255,255,255,0.62); --line: rgba(15,27,45,0.12); }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #d4e3f2; overscroll-behavior: none; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Noto Sans TC", "PingFang TC", sans-serif; color: var(--ink);
+         user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #ui { position: fixed; inset: 0; touch-action: none; }
+  .tl { position: absolute; left: calc(12px + env(safe-area-inset-left)); top: calc(10px + env(safe-area-inset-top)); }
+  .tr { position: absolute; right: calc(12px + env(safe-area-inset-right)); top: calc(10px + env(safe-area-inset-top)); display: flex; gap: 8px; }
+  .panel { background: var(--glass); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-radius: 14px; border: 1px solid rgba(255,255,255,0.7); box-shadow: 0 2px 12px rgba(30,50,80,0.12); }
+  #speedbox { padding: 8px 12px 9px; min-width: 112px; }
+  #speed { font-size: 40px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -1px; }
+  .unit { font-size: 12px; font-weight: 600; opacity: 0.6; margin-left: 3px; }
+  .mini { font-size: 11px; opacity: 0.7; margin-top: 4px; font-variant-numeric: tabular-nums; line-height: 1.5; }
+  button { font: inherit; border: 0; cursor: pointer; color: var(--ink); width: 42px; height: 42px; font-size: 19px; font-weight: 700; }
+  #center { position: absolute; left: 50%; top: calc(14px + env(safe-area-inset-top)); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; pointer-events: none; }
+  #mode { font-size: 21px; font-weight: 800; padding: 6px 14px; border-radius: 12px; color: #fff; background: #6b7a90; transition: background 0.15s; white-space: nowrap; text-shadow: 0 1px 2px rgba(0,0,0,0.25); }
+  .m-carve { background: linear-gradient(90deg, #0c8bd9, #00c2c7) !important; }
+  .m-semicarve { background: #2fa36b !important; }
+  .m-skid { background: #e0a100 !important; }
+  .m-scrape { background: #e2622b !important; }
+  .m-glide { background: #7a8aa3 !important; }
+  .m-stop { background: #8d98a8 !important; }
+  .m-air { background: #8a4fd8 !important; }
+  .m-crash { background: #d6334a !important; }
+  #carvewrap { width: 170px; height: 7px; border-radius: 4px; background: rgba(15,27,45,0.15); margin-top: 7px; overflow: hidden; }
+  #carvebar { height: 100%; width: 0; background: linear-gradient(90deg, #f2b21b, #2fa36b 55%, #00b7d6); transition: width 0.08s linear; }
+  #carvelabel { font-size: 10px; margin-top: 3px; opacity: 0.65; letter-spacing: 0.06em; }
+  #gauge { width: max-content; position: absolute; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%); padding: 8px 14px 8px; display: flex; align-items: center; gap: 14px; pointer-events: none; }
+  #dial { position: relative; width: 74px; height: 40px; }
+  #dial svg { position: absolute; inset: 0; }
+  #needle { position: absolute; left: 50%; bottom: 2px; width: 3px; height: 34px; margin-left: -1.5px; background: var(--ink); border-radius: 2px; transform-origin: 50% 100%; }
+  #edgebig { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
+  #edgeside { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; opacity: 0.6; }
+  .kv { display: grid; grid-template-columns: auto auto; gap: 1px 8px; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 104px; }
+  .kv span:nth-child(odd) { opacity: 0.6; }
+  .kv span:nth-child(even) { font-weight: 700; text-align: right; }
+  #msg { position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%) scale(0.9); font-size: 26px; font-weight: 800; color: #fff; background: rgba(214,51,74,0.92); padding: 10px 18px; border-radius: 14px; opacity: 0; transition: all 0.2s; pointer-events: none; white-space: nowrap; }
+  #msg.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  #stick { position: absolute; width: 104px; height: 104px; margin: -52px 0 0 -52px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.85); background: rgba(15,27,45,0.08); display: none; pointer-events: none; }
+  #stick::before { content: ""; position: absolute; left: 50%; top: 4px; bottom: 4px; width: 1px; background: rgba(255,255,255,0.6); }
+  #stick::after { content: ""; position: absolute; top: 50%; left: 4px; right: 4px; height: 1px; background: rgba(255,255,255,0.6); }
+  #knob { position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; border-radius: 50%; background: rgba(255,255,255,0.9); box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
+  #hint { position: absolute; left: 50%; bottom: calc(130px + env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(340px, 88vw); padding: 12px 14px; font-size: 13.5px; line-height: 1.55; text-align: left; pointer-events: none; transition: opacity 0.5s; }
+  #hint.gone { opacity: 0; }
+  #hint b { font-weight: 800; }
+  #help { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(15,27,45,0.35); z-index: 5; }
+  #help.show { display: flex; }
+  #help .panel { width: min(380px, 90vw); max-height: 80vh; overflow: auto; padding: 16px 18px; font-size: 13.5px; line-height: 1.6; background: rgba(255,255,255,0.94); }
+  #help h3 { margin: 0 0 6px; font-size: 16px; }
+  #help h4 { margin: 12px 0 4px; font-size: 13.5px; }
+  .chip { display: inline-block; padding: 0 6px; border-radius: 5px; color: #fff; font-weight: 700; font-size: 12px; }
+  @media (max-height: 520px) { #speed { font-size: 32px; } #mode { font-size: 17px; } #gauge { bottom: 8px; } }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+  <div class="tl panel" id="speedbox">
+    <div><span id="speed">0</span><span class="unit">km/h</span></div>
+    <div class="mini">最高 <b id="top">0</b> · <b id="dist">0.00km</b><br>Carve 率 <b id="carvepct">—</b></div>
+  </div>
+  <div class="tr">
+    <button class="panel" id="helpbtn" aria-label="說明">?</button>
+    <button class="panel" id="reset" aria-label="重來">↺</button>
+  </div>
+  <div id="center">
+    <div id="mode" class="mode m-stop">停止</div>
+    <div id="carvewrap"><div id="carvebar"></div></div>
+    <div id="carvelabel">CARVE 純度</div>
+  </div>
+  <div id="gauge" class="panel">
+    <div id="dial">
+      <svg viewBox="0 0 74 40"><path d="M5 38 A32 32 0 0 1 69 38" fill="none" stroke="rgba(15,27,45,0.15)" stroke-width="6" stroke-linecap="round"/>
+        <text x="2" y="12" font-size="8" font-weight="700" fill="rgba(15,27,45,0.5)">H</text><text x="66" y="12" font-size="8" font-weight="700" fill="rgba(15,27,45,0.5)">T</text></svg>
+      <div id="needle"></div>
+    </div>
+    <div><div id="edgebig"><span id="edgeval">0°</span></div><div id="edgeside">FLAT</div></div>
+    <div class="kv"><span>滑移角</span><span id="beta">0°</span><span>側向G</span><span id="gval">0</span><span>半徑</span><span id="rad">—</span><span>雪面</span><span id="surf">壓雪道</span></div>
+  </div>
+  <div id="msg"></div>
+  <div id="hint" class="panel"><b>單指拖曳操控</b>（任何位置按下即可）<br>
+    ← → 左右：立刃角度（Heel / Toe）<br>
+    ↓ 往下拉：甩板搓雪、煞車<br>
+    ↑ 往上推：壓低身體加速<br>
+    <span style="opacity:.7">放開 = 板子放平。慢慢立刃、不要甩板，就能 carving。</span></div>
+  <div id="stick"><div id="knob"></div></div>
+</div>
+<div id="help"><div class="panel">
+  <h3>怎麼玩</h3>
+  單指在螢幕任何地方按住拖曳。左右決定<b>立刃角</b>，拖越遠刃越立；往下拉是用身體<b>甩板</b>（搓雪/煞車），往上推是<b>壓低</b>減少風阻。
+  <h4>滑行判定（看滑移角 = 板頭方向 vs 前進方向）</h4>
+  <span class="chip" style="background:#0c8bd9">Carving 刻滑</span> 滑移角 &lt; 3.5°，靠刃角轉彎，雪上留下細細一條線<br>
+  <span class="chip" style="background:#2fa36b">半刻滑</span> 3.5–10°，或者轉彎有一部分靠甩板<br>
+  <span class="chip" style="background:#e0a100">搓雪</span> 10–35°，板尾在雪上搓，痕跡變寬<br>
+  <span class="chip" style="background:#e2622b">掃雪 / 推坡</span> &gt; 35°，板子橫著刮雪<br>
+  <h4>物理重點</h4>
+  • Carve 轉彎半徑 = max(板子側切半徑 7.8m × cos刃角, 平衡所需半徑)，速度越快、刃角越大轉越大的力<br>
+  • 刃能吃住的側向力 ≈ tan(刃角 + 雪的抓力角)，冰面（藍灰色）抓力很差<br>
+  • 往側滑方向的那個刃立起來會<b>逆刃</b>摔倒<br>
+  • 跳台落地時板子要對準前進方向<br>
+  • 電腦：← → 立刃（Shift 小角度）、↓ 甩板、↑ 壓低
+  <p style="opacity:.6;margin:10px 0 0">點任何地方關閉</p>
+</div></div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

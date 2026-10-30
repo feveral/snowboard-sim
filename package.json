@@ -1,0 +1,1 @@
+{"name":"snowboard-sim","private":true,"type":"module","scripts":{"sim":"node test/sim.mjs"}}

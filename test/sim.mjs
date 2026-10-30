@@ -72,3 +72,24 @@ run('side-slip', 10, (r, t, st) => {
   r.yaw = r.fallLineYaw() + Math.PI / 2;
   return { steer: t < 5 ? -0.08 : -0.3, pull: 0 };
 }, 200);
+// 6. Escape a side-slip: board across the hill at speed, then hold steer one way
+for (const sgn of [1, -1]) run(`sideways escape, hold ${sgn > 0 ? 'right' : 'left'}`, 8, (r, t, st) => {
+  if (!st.init) { st.init = 1; r.yaw = r.fallLineYaw() + Math.PI / 2; r._frame(); const n = r.n; r.v = [n[0] * 8, 0, n[2] * 8]; }
+  if (st.log === undefined) st.log = 1;
+  return { steer: sgn * 0.7, pull: 0 };
+}, 260);
+// 7. Long session with crashes: random human-ish rider, measure how long it stays stuck sideways
+run('3-min random rider', 180, (r, t, st) => {
+  if (st.next === undefined) { st.next = 0; st.s = 0; st.p = 0; st.side = 0; }
+  if (t > st.next) { st.next = t + 0.8 + Math.random() * 2.2; st.s = (Math.random() * 2 - 1); st.p = Math.random() < 0.2 ? Math.random() : (Math.random() < 0.2 ? -1 : 0); }
+  if (r.mode.key === 'scrape') st.side += 1 / 120;
+  if (Math.abs(t - 179.99) < 0.01) console.log('  time in scrape:', st.side.toFixed(1), 's');
+  return { steer: st.s, pull: st.p };
+});
+// 8. Heelside / toeside side-slip then release -> should end up riding straight again
+for (const dir of [1, -1]) run(`brake ${dir > 0 ? 'right(toe)' : 'left(heel)'} 3s, release`, 9, (r, t, st) => {
+  st.log = 1;
+  if (t < 3) return { steer: 0, pull: -1 };
+  if (t < 6) return { steer: dir * 0.3, pull: 1 };
+  return { steer: 0, pull: 0 };
+}, 300);

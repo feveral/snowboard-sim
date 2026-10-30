@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#d4e3f2">
+<meta name="theme-color" content="#c9d9ea">
 <title>Snowboard Sim</title>
 <style>
   :root { --ink: #0f1b2d; --glass: rgba(255,255,255,0.62); --line: rgba(15,27,45,0.12); }
@@ -23,8 +23,8 @@
   .unit { font-size: 12px; font-weight: 600; opacity: 0.6; margin-left: 3px; }
   .mini { font-size: 11px; opacity: 0.7; margin-top: 4px; font-variant-numeric: tabular-nums; line-height: 1.5; }
   button { font: inherit; border: 0; cursor: pointer; color: var(--ink); width: 42px; height: 42px; font-size: 19px; font-weight: 700; }
-  #center { position: absolute; left: 50%; top: calc(14px + env(safe-area-inset-top)); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; pointer-events: none; }
-  #mode { font-size: 21px; font-weight: 800; padding: 6px 14px; border-radius: 12px; color: #fff; background: #6b7a90; transition: background 0.15s; white-space: nowrap; text-shadow: 0 1px 2px rgba(0,0,0,0.25); }
+  #center { position: absolute; left: calc(50% + 44px); top: calc(60px + env(safe-area-inset-top)); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; pointer-events: none; }
+  #mode { font-size: 19px; font-weight: 800; padding: 6px 14px; border-radius: 12px; color: #fff; background: #6b7a90; transition: background 0.15s; white-space: nowrap; text-shadow: 0 1px 2px rgba(0,0,0,0.25); }
   .m-carve { background: linear-gradient(90deg, #0c8bd9, #00c2c7) !important; }
   .m-semicarve { background: #2fa36b !important; }
   .m-skid { background: #e0a100 !important; }
@@ -33,7 +33,7 @@
   .m-stop { background: #8d98a8 !important; }
   .m-air { background: #8a4fd8 !important; }
   .m-crash { background: #d6334a !important; }
-  #carvewrap { width: 170px; height: 7px; border-radius: 4px; background: rgba(15,27,45,0.15); margin-top: 7px; overflow: hidden; }
+  #carvewrap { width: 150px; height: 7px; border-radius: 4px; background: rgba(15,27,45,0.15); margin-top: 7px; overflow: hidden; }
   #carvebar { height: 100%; width: 0; background: linear-gradient(90deg, #f2b21b, #2fa36b 55%, #00b7d6); transition: width 0.08s linear; }
   #carvelabel { font-size: 10px; margin-top: 3px; opacity: 0.65; letter-spacing: 0.06em; }
   #gauge { width: max-content; position: absolute; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%); padding: 8px 14px 8px; display: flex; align-items: center; gap: 14px; pointer-events: none; }
@@ -45,6 +45,22 @@
   .kv { display: grid; grid-template-columns: auto auto; gap: 1px 8px; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 104px; }
   .kv span:nth-child(odd) { opacity: 0.6; }
   .kv span:nth-child(even) { font-weight: 700; text-align: right; }
+  #scorewrap { margin-top: 6px; font-weight: 800; font-size: 20px; font-variant-numeric: tabular-nums; }
+  #combo { font-size: 12px; font-weight: 800; color: #0c8bd9; min-height: 14px; letter-spacing: 0.03em; }
+  .tr button { width: 40px; height: 40px; font-size: 16px; }
+  .tr button.wide { width: 58px; font-size: 14px; }
+  #envlabel { position: absolute; right: calc(12px + env(safe-area-inset-right)); top: calc(58px + env(safe-area-inset-top)); font-size: 11px; font-weight: 700; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.45); }
+  #popups { position: absolute; left: 50%; top: 30%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; width: 92vw; }
+  .pop { font-size: 16px; font-weight: 800; color: #fff; padding: 5px 12px; border-radius: 10px; background: rgba(15,27,45,0.55); text-shadow: 0 1px 2px rgba(0,0,0,0.3); white-space: nowrap; animation: popin 0.25s ease-out; transition: opacity 0.5s, transform 0.5s; }
+  .pop.out { opacity: 0; transform: translateY(-14px); }
+  .pop.carve { background: linear-gradient(90deg, rgba(12,139,217,0.92), rgba(0,194,199,0.92)); font-size: 18px; }
+  .pop.gate { background: rgba(39,196,107,0.92); }
+  .pop.air, .pop.bonus { background: rgba(138,79,216,0.92); }
+  .pop.bad, .pop.miss { background: rgba(214,51,74,0.88); }
+  .pop.skid { background: rgba(224,161,0,0.9); }
+  .pop.info { background: rgba(15,27,45,0.75); }
+  @keyframes popin { from { transform: scale(0.7); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .pop { animation: none; } }
   #msg { position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%) scale(0.9); font-size: 26px; font-weight: 800; color: #fff; background: rgba(214,51,74,0.92); padding: 10px 18px; border-radius: 14px; opacity: 0; transition: all 0.2s; pointer-events: none; white-space: nowrap; }
   #msg.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
   #stick { position: absolute; width: 104px; height: 104px; margin: -52px 0 0 -52px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.85); background: rgba(15,27,45,0.08); display: none; pointer-events: none; }
@@ -74,12 +90,19 @@
 <div id="ui">
   <div class="tl panel" id="speedbox">
     <div><span id="speed">0</span><span class="unit">km/h</span></div>
-    <div class="mini">最高 <b id="top">0</b> · <b id="dist">0.00km</b><br>Carve 率 <b id="carvepct">—</b></div>
+    <div class="mini">最高 <b id="top">0</b> · <b id="dist">0.00</b> km</div>
+    <div id="scorewrap"><span id="score">0</span><span class="unit">分</span></div>
+    <div id="combo"></div>
+    <div class="mini">最佳 <b id="best">0</b></div>
   </div>
   <div class="tr">
+    <button class="panel wide" id="cambtn" aria-label="視角">🎥高</button>
+    <button class="panel" id="sndbtn" aria-label="聲音">🔊</button>
     <button class="panel" id="helpbtn" aria-label="說明">?</button>
     <button class="panel" id="reset" aria-label="重來">↺</button>
   </div>
+  <div id="envlabel"></div>
+  <div id="popups"></div>
   <div id="center">
     <div id="mode" class="mode m-stop">停止</div>
     <div id="carvewrap"><div id="carvebar"></div></div>
@@ -96,26 +119,34 @@
   </div>
   <div id="msg"></div>
   <div id="hint" class="panel"><b>單指拖曳操控</b>（任何位置按下即可）<br>
-    ← → 左右：立刃角度（Heel / Toe）<br>
-    ↓ 往下拉：甩板搓雪、煞車<br>
+    ← → 左右：往畫面左/右轉（自動用對的刃）<br>
+    ↓ 往下拉：煞車推坡（拉越多板子越橫）<br>
+    ↙↘ 下拉同時偏左/右：決定板頭甩向哪邊（後刃/前刃）<br>
     ↑ 往上推：壓低身體加速<br>
-    <span style="opacity:.7">放開 = 板子放平。慢慢立刃、不要甩板，就能 carving。</span></div>
+    <span style="opacity:.7">放開 = 板子自動轉回正前方直滑。穩穩壓住左右、不要下拉，就是 carving。</span></div>
   <div id="stick"><div id="knob"></div></div>
 </div>
 <div id="help"><div class="panel">
   <h3>怎麼玩</h3>
-  單指在螢幕任何地方按住拖曳。左右決定<b>立刃角</b>，拖越遠刃越立；往下拉是用身體<b>甩板</b>（搓雪/煞車），往上推是<b>壓低</b>減少風阻。
-  <h4>滑行判定（看滑移角 = 板頭方向 vs 前進方向）</h4>
-  <span class="chip" style="background:#0c8bd9">Carving 刻滑</span> 滑移角 &lt; 3.5°，靠刃角轉彎，雪上留下細細一條線<br>
-  <span class="chip" style="background:#2fa36b">半刻滑</span> 3.5–10°，或者轉彎有一部分靠甩板<br>
-  <span class="chip" style="background:#e0a100">搓雪</span> 10–35°，板尾在雪上搓，痕跡變寬<br>
-  <span class="chip" style="background:#e2622b">掃雪 / 推坡</span> &gt; 35°，板子橫著刮雪<br>
-  <h4>物理重點</h4>
-  • Carve 轉彎半徑 = max(板子側切半徑 7.8m × cos刃角, 平衡所需半徑)，速度越快、刃角越大轉越大的力<br>
-  • 刃能吃住的側向力 ≈ tan(刃角 + 雪的抓力角)，冰面（藍灰色）抓力很差<br>
-  • 往側滑方向的那個刃立起來會<b>逆刃</b>摔倒<br>
-  • 跳台落地時板子要對準前進方向<br>
-  • 電腦：← → 立刃（Shift 小角度）、↓ 甩板、↑ 壓低
+  單指在螢幕任何地方按住拖曳（一隻手就能玩），所有方向都是<b>相對畫面</b>：
+  <h4>手勢</h4>
+  <b>左右</b>：往畫面左/右轉。拖越遠刃越立、轉越急。遊戲會自動判斷該用前刃還是後刃，反腳（switch）也不會左右顛倒。<br>
+  <b>往下拉</b>：煞車。板子橫過來、用上坡那側的刃刮雪；拉一點是搓雪減速，拉到底是 hockey stop。<br>
+  <b>往下拉 + 偏右</b>：板頭往右甩 → 前刃推坡（regular）；<b>偏左</b> → 後刃推坡。<br>
+  <b>放開</b>：板子自動轉回跟前進方向一致，變成直板往前滑。停在坡上放開，會轉向山下開始滑。<br>
+  <b>往上推</b>：壓低身體減少風阻。
+  <h4>滑行判定（滑移角 = 板頭方向 vs 前進方向）</h4>
+  <span class="chip" style="background:#0c8bd9">Carving 刻滑</span> &lt; 3.5°，只靠刃轉彎，雪上留下細細的刻痕<br>
+  <span class="chip" style="background:#2fa36b">半刻滑</span> 3.5–10°，或轉彎有一部分靠甩板<br>
+  <span class="chip" style="background:#e0a100">搓雪</span> 10–35°，板子刮出寬的刮痕<br>
+  <span class="chip" style="background:#e2622b">推坡 / 掃雪</span> &gt; 35°，板子橫著刮<br>
+  <h4>計分</h4>
+  每個彎都會評分：乾淨的 carve 彎加分又累積 combo（最多 ×4），立刃越深、G 越大分越高；穿過旗門（紅/藍旗中間）、跳台騰空、空中轉體都加分；搓雪轉彎、漏旗門、摔倒會中斷 combo。進入支線雪道（蘑菇坡、林間道、陡坡）有獎勵。
+  <h4>物理</h4>
+  • Carve 半徑 = max(側切半徑 7.8m × cos刃角, 平衡所需半徑)<br>
+  • 刃能吃住的側向力 ≈ tan(刃角 + 雪的抓力角)，冰面（偏藍、反光）抓力很差<br>
+  • 往立起來的刃那側側滑 → 逆刃摔倒；跳台落地要對準前進方向<br>
+  • 電腦：← → 轉彎（Shift 小角度）、↓ 煞車、↑ 壓低
   <p style="opacity:.6;margin:10px 0 0">點任何地方關閉</p>
 </div></div>
 <script type="module" src="./src/main.js"></script>

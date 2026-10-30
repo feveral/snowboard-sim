@@ -68,6 +68,7 @@ export class Rider {
     this.crashReason = '';
     this.airT = 0;
     this.lastPivotDir = 1;
+    this.travel = 1;         // +1 riding forward, -1 riding switch (with hysteresis)
     this.betaS = 0;          // smoothed |slip angle|
     this.mode = MODES.stop;
     this.stats = { dist: 0, turnDist: 0, carveDist: 0, maxSpeed: 0, maxG: 0, crashes: 0, maxAir: 0 };
@@ -105,9 +106,14 @@ export class Rider {
 
   recover() {
     this._frame();
-    this.v = [0, 0, 0];
-    this.yaw = this.fallLineYaw() + 1.2 * Math.sign(Math.sin(this.yaw - this.fallLineYaw()) || 1);
+    // get back up pointing ~30° off the fall line, already rolling
+    const fl = this.fallLineYaw();
+    this.yaw = fl + 0.5 * (Math.sign(Math.sin(this.yaw - fl)) || 1);
     this.edge = 0;
+    this.travel = 1;
+    this.betaS = 0;
+    this._frame();
+    this.v = [this.f[0] * 2.5, this.f[1] * 2.5, this.f[2] * 2.5];
     this.grounded = true;
     // shove away from trees
     for (let i = 0; i < 10; i++) {
@@ -143,12 +149,58 @@ export class Rider {
       return;
     }
 
-    // ---------------- edge angle (rate limited) ----------------
-    const edgeTarget = steer * P.maxEdge;
+    // ---------------- intent -> edge + pivot ----------------
+    // Controls are relative to the direction of travel (what the camera shows):
+    //   steer  = turn left/right (the right edge is picked automatically, also when riding switch)
+    //   pull   = brake: swing the board across (side-slip / hockey stop) on the UPHILL edge;
+    //            let go and the board swings back in line with the travel direction.
+    this._frame();
+    const n0 = this.n;
+    let refF = dot(v, this.f), refR = dot(v, this.r);
+    const spA = Math.hypot(refF, refR);
+    if (spA < 1.5) {
+      // nearly stopped: the fall line is the reference "travel" direction
+      const gt0 = [n0[0], n0[1] * n0[1] - 1, n0[2]];
+      const gl = Math.hypot(gt0[0], gt0[1], gt0[2]) || 1;
+      const wgt = (1.5 - spA) / 1.5 * 1.5 / gl;
+      refF += dot(gt0, this.f) * wgt; refR += dot(gt0, this.r) * wgt;
+    }
+    if (refF > 0.4) this.travel = 1; else if (refF < -0.4) this.travel = -1;
+    let betaS = Math.atan2(this.travel * refR, Math.abs(refF)); // + = moving to the right of the nose
+    const sideways = smoothstep(0.95, 1.3, Math.abs(betaS));     // ~55°..75°
+    if (sideways > 0.5 && Math.abs(steer) > 0.3 && Math.abs(refF) < 0.4 * Math.hypot(refF, refR)) {
+      // board across the slide: the end on the side you push becomes the new nose
+      // (right end of the board = the one on the right of the travel direction)
+      const rightEnd = refR > 0 ? -1 : 1; // f lies to the right of motion when motion is to the board's left
+      this.travel = Math.sign(steer) * rightEnd;
+      betaS = Math.atan2(this.travel * refR, Math.abs(refF));
+    }
+    const brake = Math.max(0, pull);
+    if (Math.abs(steer) > 0.15) this.lastPivotDir = Math.sign(steer);
+    const betaTarget = -this.lastPivotDir * brake * 1.48; // up to ~85°: nose swings toward the steer side
+    let wPivotRaw = clamp(4.0 * (betaS - betaTarget), -P.pivotRate, P.pivotRate);
+    const alignGain = brake > 0.05 ? 1 : smoothstep(0.07, 0.22, Math.abs(betaS)) * 0.75;
+    const wPivotAll = this.grounded && spA + 1 > 0 ? wPivotRaw * alignGain : 0;
+
+    let edgeTarget = steer * this.travel * P.maxEdge;
+    if (brake > 0.05) {
+      // engage the trailing (uphill) edge: opposite to the board's sideways motion
+      const slideR = dot(v, this.r);
+      const grL = n0[0] * n0[1] * this.r[0] + (n0[1] * n0[1] - 1) * this.r[1] + n0[2] * n0[1] * this.r[2]; // gravity across the board
+      const sgn = Math.abs(slideR) > 0.4 ? -Math.sign(slideR)
+        : spA < 1.5 ? (-Math.sign(grL) || 1)
+        : (Math.sign(wPivotRaw) || this.lastPivotDir) * this.travel;
+      const be = sgn * (8 + 36 * brake) * (Math.PI / 180);
+      edgeTarget += (be - edgeTarget) * smoothstep(0.05, 0.3, brake);
+    } else if (sideways > 0) {
+      const uphill = -Math.sign(dot(v, this.r)) || 1;
+      const ss = uphill * Math.abs(steer) * 14 * (Math.PI / 180);
+      edgeTarget += (ss - edgeTarget) * sideways;
+    }
     this.edge += clamp(edgeTarget - this.edge, -P.edgeRate * dt, P.edgeRate * dt);
     const th = Math.abs(this.edge);
     const eSign = Math.sign(this.edge);
-    if (Math.abs(steer) > 0.12) this.lastPivotDir = Math.sign(steer);
+    tel.brake = brake;
 
     const cda = P.cdaUpright + (P.cdaTuck - P.cdaUpright) * tuck;
     const kd = P.massDragK * cda;
@@ -173,16 +225,8 @@ export class Rider {
       const rBal = (speed0 * speed0) / Math.max(aC, 0.4);
       const R = Math.max(rGeo, rBal);
       const wCarve = eSign * carveEff * vf0 / R;
-      // Pivot (rotating the board with the body): stops once the board is
-      // ~90° across the direction of travel, like a real hockey stop.
-      let pivF = 1;
-      if (speed0 > 1.5) {
-        const vrd = -this.lastPivotDir * dot(v, this.r);   // slip in the pivot direction
-        const bp = Math.atan2(vrd, Math.abs(vf0));
-        pivF = clamp((Math.PI / 2 - bp) / 0.5, 0, 1);
-      }
-      const wPivot = this.lastPivotDir * pivot * P.pivotRate * (1 - 0.55 * Math.sin(th)) * pivF;
-      const wSlow = steer * 1.4 * Math.max(0, 1 - speed0 / 7); // body-steer at low speed
+      const wPivot = wPivotAll * (1 - 0.4 * Math.sin(th) * (1 - brake));
+      const wSlow = steer * 1.4 * Math.max(0, 1 - speed0 / 7) * (1 - sideways); // body-steer at low speed
       const w = wCarve + wPivot + wSlow;
       this.yaw -= w * dt; // + w = turning right; right = -dYaw (see frame)
       this._frame();
@@ -261,7 +305,7 @@ export class Rider {
       const a = 1 - Math.exp(-dt / 0.12);
       this.betaS += (beta - this.betaS) * a;
       const latG = aLat / G;
-      const pivotShare = Math.abs(wPivot) / (Math.abs(w) + 0.05);
+      const pivotShare = brake > 0.05 ? Math.abs(wPivot) / (Math.abs(w) + 0.05) : 0;
       tel.speed = speed; tel.beta = beta; tel.betaS = this.betaS; tel.latG = latG;
       tel.grip = grip; tel.skid = Math.abs(vrN); tel.omega = w;
       tel.omegaCarve = wCarve; tel.omegaPivot = wPivot;
@@ -296,7 +340,7 @@ export class Rider {
       const sp = Math.hypot(v[0], v[1], v[2]);
       const sc = Math.max(0, sp - kd * sp * sp * dt) / (sp || 1);
       for (let i = 0; i < 3; i++) v[i] *= sc;
-      this.yaw -= steer * 3.2 * dt; // spin
+      this.yaw -= steer * this.travel * 3.2 * dt; // spin
       p[0] += v[0] * dt; p[1] += v[1] * dt; p[2] += v[2] * dt;
       this.mode = MODES.air;
       tel.speed = sp;
@@ -330,7 +374,7 @@ export class Rider {
       const d = Math.hypot(dx, dz) || 1;
       const push = hit.r + 0.3 - d;
       p[0] += (dx / d) * push; p[2] += (dz / d) * push;
-      if (sp > 4) this.crash('撞樹 🌲');
+      if (sp > 4) this.crash(hit.type === 'rock' ? '撞到石頭' : hit.type === 'tower' ? '撞到纜車柱' : '撞樹');
       else for (let i = 0; i < 3; i++) v[i] *= 0.2;
     }
   }

@@ -20,7 +20,7 @@ const D2R = Math.PI / 180;
 export const PARAMS = {
   sidecutR: 7.8,        // m
   maxEdge: 68 * D2R,
-  edgeRate: 4.0,        // rad/s, how fast you can roll edge to edge
+  edgeRate: 2.6,        // rad/s, how fast you can roll edge to edge (~0.4 s to 60°)
   pivotRate: 3.0,       // rad/s at full pull
   massDragK: 0.5 * 1.2 / 75,
   cdaUpright: 0.6,
@@ -283,7 +283,7 @@ export class Rider {
 
       // ---- yaw dynamics ----
       const slip = Math.atan2(Math.abs(vr0), Math.abs(vf0) + 0.3);
-      const carveEff = smoothstep(0.05, 0.26, th);
+      const carveEff = smoothstep(0.12, 0.42, th); // a low edge doesn't bend the board into its arc: it drifts
       const rGeo = P.sidecutR * Math.cos(th);
       const gIn = eSign * dot(gt, this.r);                 // gravity toward the turn centre
       const aC = N * Math.tan(th) + gIn;
@@ -403,7 +403,7 @@ export class Rider {
       let m;
       if (speed < 1.2) m = MODES.stop;
       else if (bd < 3.5) {
-        if (th > 13 * D2R && Math.abs(wCarve) > 0.1 && pivotShare < 0.45 && speed > 5 && bite > 0.4) m = MODES.carve;
+        if (th > 18 * D2R && Math.abs(wCarve) > 0.1 && pivotShare < 0.45 && speed > 5 && bite > 0.4) m = MODES.carve;
         else if ((pivotShare >= 0.45 || (speed <= 5 && th > 13 * D2R)) && Math.abs(w) > 0.15) m = MODES.semicarve; // pivoting / too slow to carve
         else m = MODES.glide;
       } else if (bd < 10) m = MODES.semicarve;

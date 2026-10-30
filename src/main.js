@@ -126,7 +126,7 @@ const touch = { active: false, id: -1, ox: 0, oy: 0, x: 0, y: 0 };
 const keys = new Set();
 const stick = $('stick'), knob = $('knob');
 const ui = $('ui');
-const scaleX = () => Math.min(window.innerWidth, window.innerHeight) * 0.30;
+const scaleX = () => Math.min(window.innerWidth, window.innerHeight) * 0.36;
 const scaleY = () => Math.min(window.innerWidth, window.innerHeight) * 0.25;
 let hint = $('hint');
 function hideHint() { if (hint) { hint.classList.add('gone'); hint = null; } }
@@ -168,14 +168,15 @@ function readInput(dt) {
   if (touch.active) {
     const dx = clamp((touch.x - touch.ox) / scaleX(), -1, 1);
     const dy = clamp((touch.y - touch.oy) / scaleY(), -1, 1);
-    input.steer = Math.sign(dx) * Math.pow(Math.abs(dx), 1.15);
+    // progressive: small thumb movements = small edge angles, deep edges need a real push
+    input.steer = Math.sign(dx) * Math.pow(Math.abs(dx), 1.8);
     input.pull = Math.abs(dy) < 0.15 ? 0 : (dy - Math.sign(dy) * 0.15) / 0.85;
     knob.style.transform = `translate(calc(-50% + ${dx * 46}px), calc(-50% + ${dy * 46}px))`;
   } else {
     const l = keys.has('arrowleft') || keys.has('a'), r = keys.has('arrowright') || keys.has('d');
     const tgt = (r ? 1 : 0) - (l ? 1 : 0);
     const max = keys.has('shift') ? 0.45 : 1;
-    kbSteer += clamp(tgt * max - kbSteer, -2.4 * dt, 2.4 * dt);
+    kbSteer += clamp(tgt * max - kbSteer, -1.4 * dt, 1.4 * dt);
     if (!l && !r) kbSteer += clamp(-kbSteer, -4 * dt, 4 * dt);
     input.steer = kbSteer;
     input.pull = (keys.has('arrowdown') || keys.has('s') ? 1 : 0) - (keys.has('arrowup') || keys.has('w') ? 1 : 0);

@@ -96,8 +96,8 @@ class Bot {
     if (parkAt(z) && Math.abs(r.p[0] - pisteCenter(z)) < PARK_HALF + 4) {
       const line = S.maxV > 15 ? -6 : 6;
       if (!r.grounded) {
-        if (S.key === 'freerider' && this.spinLeft === undefined) this.spinLeft = Math.PI * (Math.random() < 0.5 ? 1 : 2);
-        if (this.spinLeft > 0) { const before = r.yaw; this.input.steer = 1; this.spinLeft -= Math.abs(r.yaw - (this.lastYaw ?? r.yaw)); this.lastYaw = r.yaw; this.input.pull = 0; return; }
+        if (S.key === 'freerider' && this.spinLeft === undefined) { this.spinGoal = Math.PI * (Math.random() < 0.5 ? 1 : 2); this.spinLeft = this.spinGoal; }
+        if (this.spinLeft > (this.spinGoal || Math.PI) * 0.3) { this.input.steer = 1; this.spinLeft -= Math.abs(r.yaw - (this.lastYaw ?? r.yaw)); this.lastYaw = r.yaw; this.input.pull = 0; return; }
         const agl = r.p[1] - terrain.height(r.p[0], r.p[2]);
         this.input.steer = 0; this.input.pull = S.key === 'carver' && (r.v[1] > 0 || agl > 1.3) ? 0.6 : 0; // carvers grab, let go before landing
         return;
@@ -150,7 +150,7 @@ class Bot {
     // speed control: scrub speed with a skid when going too fast (like real riders do)
     if (sp > S.maxV) pull = Math.max(pull, clamp((sp - S.maxV) / 5, 0.15, 0.8));
     if (danger && sp > 8) pull = Math.max(pull, 0.5);
-    const target = this.dir * S.edge * (r.crashT > 0 ? 0 : 1);
+    const target = this.dir * (danger ? Math.max(S.edge, 0.85) : S.edge) * (r.crashT > 0 ? 0 : 1);
     this.steerS += clamp(target - this.steerS, -2.6 * dt, 2.6 * dt);
     this.input.steer = this.steerS;
     this.input.pull = pull * (Math.abs(this.steerS) > 0.2 ? 1 : 0.5);

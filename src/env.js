@@ -63,57 +63,56 @@ export function makeSky() {
 export function makeMountains() {
   const group = new THREE.Group();
   const layers = [
-    { R: 950, base: -200, amp: 230, seed: 1, haze: 0.35, n: 260 },
-    { R: 1250, base: -160, amp: 300, seed: 7, haze: 0.55, n: 260 },
+    { R: 1300, base: -190, amp: 230, seed: 7, haze: 0.5, n: 300, rows: 10 },
+    { R: 1000, base: -210, amp: 170, seed: 1, haze: 0.32, n: 300, rows: 10 },
   ];
-  const ROWS = [0, 0.45, 0.7, 0.86, 1];
   for (const L of layers) {
     const pos = [], col = [], idx = [];
-    const snow = new THREE.Color(0xf4f8fd), rock = new THREE.Color(0x4c5462), forest = new THREE.Color(0x2c3d34);
+    const snow = new THREE.Color(0xf5f8fc), rock = new THREE.Color(0x59606b), forest = new THREE.Color(0x2f4236);
+    const R = L.rows;
     for (let i = 0; i <= L.n; i++) {
       const a = (i / L.n) * Math.PI * 2;
-      const u = i / L.n * 26;
+      const u = i / L.n * 30;
+      // ridged multi-fractal skyline
       let ridge = 0;
       for (let o = 0; o < 5; o++) {
         const f = Math.pow(2, o);
-        ridge += (1 - Math.abs(noise2(u * f * 0.5 + L.seed * 13, L.seed + o * 3.1))) / f;
+        ridge += (1 - Math.abs(noise2(u * f * 0.45 + L.seed * 13, L.seed + o * 3.1))) / f;
       }
-      ridge = Math.pow(ridge / 1.75, 2.6);
+      ridge = Math.pow(ridge / 1.75, 2.4);
       const top = L.base + L.amp * ridge;
-      const x = Math.sin(a) * L.R, z = Math.cos(a) * L.R;
-      const snowline = L.base + L.amp * (0.32 + 0.1 * noise2(u * 2, L.seed));
-      for (let rI = 0; rI < ROWS.length; rI++) {
-        const y = (L.base - 260) + (top - (L.base - 260)) * ROWS[rI];
-        pos.push(x, y, z);
-        const streak = noise2(u * 9 + rI, L.seed * 2) * 0.5 + 0.5;
+      const snowline = L.base + L.amp * (0.3 + 0.08 * noise2(u * 2, L.seed));
+      const foot = L.base - 260;
+      for (let r = 0; r <= R; r++) {
+        const t = r / R;
+        // slopes: concave profile, pushed back as they rise so faces have real shading
+        const y = foot + (top - foot) * Math.pow(t, 0.8);
+        const rr = L.R + 140 * (t * t) * (0.6 + 0.4 * noise2(u * 3, r * 0.3 + L.seed));
+        const wob = 18 * noise2(u * 6, r * 0.5 + L.seed) * t;
+        pos.push(Math.sin(a) * (rr + wob), y, Math.cos(a) * (rr + wob));
         let c;
-        if (y < snowline - 40) c = forest.clone().lerp(rock, 0.3);
-        else if (y < snowline) c = rock.clone().lerp(snow, 0.3 * streak);
-        else c = snow.clone().lerp(rock, 0.35 * Math.max(0, streak - 0.45) * 2);
-        const lit = 0.75 + 0.25 * Math.sin(a * 5 + L.seed + u);
-        c.multiplyScalar(lit);
-        c.lerp(HAZE, L.haze + (1 - ROWS[rI]) * 0.25);
+        const gully = noise2(u * 14, t * 4 + L.seed) * 0.5 + 0.5;
+        if (y < snowline - 50) c = forest.clone().lerp(snow, 0.25);
+        else if (y < snowline) c = rock.clone().lerp(snow, 0.45 + 0.3 * gully);
+        else c = snow.clone().lerp(rock, Math.max(0, gully - 0.62) * 1.6);
+        c.lerp(HAZE, L.haze * (1.1 - t * 0.4));
         col.push(c.r, c.g, c.b);
       }
-      if (i < L.n) {
-        const R = ROWS.length;
-        for (let rI = 0; rI < R - 1; rI++) {
-          const b0 = i * R + rI, b1 = (i + 1) * R + rI;
-          idx.push(b0, b1, b0 + 1, b0 + 1, b1, b1 + 1);
-        }
+      if (i < L.n) for (let r = 0; r < R; r++) {
+        const b0 = i * (R + 1) + r, b1 = (i + 1) * (R + 1) + r;
+        idx.push(b0, b0 + 1, b1, b0 + 1, b1 + 1, b1);
       }
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
     g.setIndex(idx);
-    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, fog: false, side: THREE.DoubleSide, depthWrite: false }));
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, fog: false, side: THREE.DoubleSide, depthWrite: false, flatShading: true }));
     m.renderOrder = -1;
     m.frustumCulled = false;
     group.add(m);
   }
-  // far layer first so the near ridge draws over it
-  group.children.reverse();
   return group;
 }
 
@@ -546,42 +545,97 @@ export const DOT = canvasTex(32, (g) => {
   g.fillStyle = gr; g.fillRect(0, 0, 32, 32);
 }, false);
 
+// soft, slightly irregular snowflake
+export const FLAKE = canvasTex(64, (g) => {
+  g.clearRect(0, 0, 64, 64);
+  for (let i = 0; i < 7; i++) {
+    const a = i / 7 * Math.PI * 2, r = 6 + (i % 3) * 3;
+    const x = 32 + Math.cos(a) * r * 0.5, y = 32 + Math.sin(a) * r * 0.5;
+    const gr = g.createRadialGradient(x, y, 0, x, y, 16 + (i % 2) * 6);
+    gr.addColorStop(0, 'rgba(255,255,255,0.55)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+  }
+  const c = g.createRadialGradient(32, 32, 0, 32, 32, 9);
+  c.addColorStop(0, 'rgba(255,255,255,1)'); c.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = c; g.fillRect(0, 0, 64, 64);
+}, false);
+
+// Snowfall: flakes live in world space inside a box that wraps around the camera
+// (done in the vertex shader), so riding fast streams you through the snow.
+function snowLayer(N, box, size, nearFade) {
+  const base = new Float32Array(N * 3), rnd = new Float32Array(N * 4);
+  for (let i = 0; i < N; i++) {
+    base[i * 3] = Math.random() * box[0]; base[i * 3 + 1] = Math.random() * box[1]; base[i * 3 + 2] = Math.random() * box[2];
+    rnd[i * 4] = 0.45 + Math.random() * Math.random() * 1.6;   // size
+    rnd[i * 4 + 1] = Math.random() * 6.283;                      // phase
+    rnd[i * 4 + 2] = 0.7 + Math.random() * 0.8;                  // fall speed
+    rnd[i * 4 + 3] = Math.random();                              // density slot
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(base, 3));
+  g.setAttribute('rnd', new THREE.BufferAttribute(rnd, 4));
+  const mat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false,
+    uniforms: {
+      map: { value: FLAKE }, uCam: { value: new THREE.Vector3() }, uTime: { value: 0 }, uWind: { value: new THREE.Vector2() },
+      uBox: { value: new THREE.Vector3(...box) }, uSize: { value: size }, uDensity: { value: 1 }, uNear: { value: nearFade },
+      fogColor: { value: FOGREF.color }, uLight: { value: new THREE.Color(1, 1, 1) },
+    },
+    vertexShader: `attribute vec4 rnd; uniform vec3 uCam; uniform float uTime; uniform vec2 uWind; uniform vec3 uBox; uniform float uSize; uniform float uDensity; uniform float uNear;
+      varying float vA; varying float vFog; varying float vRot;
+      void main(){
+        float ph = rnd.y;
+        vec3 p = position + vec3(uWind.x, -uTime * rnd.z, uWind.y);
+        p.x += sin(uTime * (0.9 + rnd.z) + ph) * 0.35;
+        p.z += cos(uTime * (0.7 + rnd.z * 0.6) + ph * 1.3) * 0.3;
+        vec3 o = uCam - uBox * 0.5;
+        p = mod(p - o, uBox) + o;
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        gl_Position = projectionMatrix * mv;
+        float d = -mv.z;
+        gl_PointSize = clamp(uSize * rnd.x * (300.0 / max(d, 0.1)), 1.0, 90.0);
+        vA = step(rnd.w, uDensity) * smoothstep(uNear * 0.4, uNear, d) * (0.55 + 0.45 * rnd.x / 2.0);
+        vFog = d; vRot = ph + uTime * (rnd.z - 1.1);
+      }`,
+    fragmentShader: `uniform sampler2D map; uniform vec3 fogColor; uniform vec3 uLight; varying float vA; varying float vFog; varying float vRot;
+      void main(){
+        if (vA < 0.01) discard;
+        vec2 c = gl_PointCoord - 0.5; float s = sin(vRot), co = cos(vRot);
+        c = vec2(c.x * co - c.y * s, c.x * s + c.y * co) + 0.5;
+        float a = texture2D(map, c).a * vA * (vFog < 3.0 ? 0.45 : 1.0);
+        float f = smoothstep(10.0, 60.0, vFog);
+        gl_FragColor = vec4(mix(uLight, fogColor, f * 0.6), a * (1.0 - f * 0.5));
+      }`,
+  });
+  const pts = new THREE.Points(g, mat);
+  pts.frustumCulled = false;
+  return pts;
+}
+
 export class Snowfall {
   constructor(scene) {
-    this.N = 2400; this.B = 70; this.H = 40;
-    const N = this.N;
-    this.pos = new Float32Array(N * 3);
-    const a = new Float32Array(N), ps = new Float32Array(N);
-    for (let i = 0; i < N; i++) {
-      this.pos[i * 3] = Math.random() * this.B; this.pos[i * 3 + 1] = Math.random() * this.H; this.pos[i * 3 + 2] = Math.random() * this.B;
-      a[i] = 0.55 + Math.random() * 0.45; ps[i] = 0.5 + Math.random() * 0.9;
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
-    g.setAttribute('alpha', new THREE.BufferAttribute(a, 1));
-    g.setAttribute('psize', new THREE.BufferAttribute(ps, 1));
-    this.geo = g;
-    const mat = makePointsMaterial(DOT, 0.14);
-    this.copies = [];
-    for (let i = 0; i < 4; i++) { const p = new THREE.Points(g, mat); p.frustumCulled = false; scene.add(p); this.copies.push(p); }
-    this.t = 0;
+    this.main = snowLayer(7000, [70, 36, 70], 0.085, 0.4);
+    this.near = snowLayer(200, [10, 7, 10], 0.26, 1.2); // big soft flakes drifting past the lens
+    scene.add(this.main, this.near);
+    this.t = 0; this.wind = new THREE.Vector2();
     this.setIntensity(1);
   }
-  setIntensity(k) { this.geo.setDrawRange(0, Math.floor(this.N * k)); }
-  update(dt, cam) {
+  setIntensity(k) {
+    this.main.material.uniforms.uDensity.value = k;
+    this.near.material.uniforms.uDensity.value = Math.max(0, (k - 0.3) / 0.7) * 0.6;
+    this.near.material.uniforms.uSize.value = 0.26;
+  }
+  setLight(c) { this.main.material.uniforms.uLight.value.copy(c); this.near.material.uniforms.uLight.value.copy(c); }
+  update(dt, cam, storm = 0) {
     this.t += dt;
-    const t = this.t, B = this.B, H = this.H;
-    const wx = 1.4 * Math.sin(t * 0.17) + 0.7 * Math.sin(t * 0.61), wz = -0.5 + 0.6 * Math.sin(t * 0.29);
-    for (let i = 0; i < this.N; i++) {
-      let x = this.pos[i * 3] + (wx + Math.sin(i * 1.7 + t * 1.3) * 0.35) * dt;
-      let y = this.pos[i * 3 + 1] - (0.9 + (i % 9) * 0.1) * dt;
-      let z = this.pos[i * 3 + 2] + (wz + Math.cos(i * 0.9 + t) * 0.3) * dt;
-      this.pos[i * 3] = ((x % B) + B) % B; this.pos[i * 3 + 1] = ((y % H) + H) % H; this.pos[i * 3 + 2] = ((z % B) + B) % B;
+    const t = this.t;
+    const gust = 1 + storm * 2.5;
+    this.wind.x += (1.2 * Math.sin(t * 0.17) + 0.7 * Math.sin(t * 0.61)) * gust * dt;
+    this.wind.y += (-0.6 + 0.6 * Math.sin(t * 0.29)) * gust * dt;
+    for (const L of [this.main, this.near]) {
+      const u = L.material.uniforms;
+      u.uCam.value.copy(cam); u.uTime.value = t; u.uWind.value.copy(this.wind);
     }
-    this.geo.attributes.position.needsUpdate = true;
-    const ox = Math.floor((cam.x - B / 2) / B) * B, oz = Math.floor((cam.z - B / 2) / B) * B, oy = cam.y - H * 0.4;
-    let i = 0;
-    for (let a = 0; a < 2; a++) for (let b = 0; b < 2; b++) this.copies[i++].position.set(ox + a * B, oy, oz + b * B);
   }
 }
 
@@ -627,7 +681,7 @@ export function makeSign(lines) {
   });
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
   const g = new THREE.Group();
-  const board = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.2), new THREE.MeshStandardMaterial({ map: t, roughness: 0.8, side: THREE.DoubleSide }));
+  const board = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.2), new THREE.MeshStandardMaterial({ map: t, roughness: 0.8, side: THREE.DoubleSide, emissive: 0xffffff, emissiveMap: t, emissiveIntensity: 0.45 }));
   board.position.y = 2.2;
   const post = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.6, 6), new THREE.MeshStandardMaterial({ color: 0x5a3b26 }));
   post.position.y = 1.3;
@@ -710,9 +764,10 @@ export class Atmosphere {
     this.hemi.color.copy(lerpC(new THREE.Color(0xdcebff), new THREE.Color(0xf0dccb), golden * 0.6));
     this.hemi.groundColor.copy(lerpC(new THREE.Color(0x7d90ab), new THREE.Color(0x8a7f8f), golden));
     this.hemi.intensity = THREE.MathUtils.lerp(1.15, 1.0, golden) + 0.55 * w;
-    this.mountains.children.forEach((m) => m.material.color.copy(lerpC(new THREE.Color(1, 1, 1), lerpC(new THREE.Color(0xffe1c4), haze, 0.3), golden * 0.7)).lerp(haze, w * 0.92));
+    this.mountains.children.forEach((m, i) => m.material.color.copy(lerpC(new THREE.Color(1, 1, 1), new THREE.Color(0xffe6cf), golden * 0.5)).lerp(haze, w * 0.95).multiplyScalar(i === 0 ? 0.95 : 0.9));
     // snowfall density
-    this.snowfall.setIntensity(0.12 + 0.88 * smoothstep(0.15, 0.9, w));
+    this.snowfall.setIntensity(0.1 + 0.9 * smoothstep(0.15, 0.9, w));
+    this.snowfall.setLight(lerpC(new THREE.Color(1, 1, 1), new THREE.Color(1, 0.88, 0.76), golden * 0.7));
     // clouds drift around the sky
     for (const c of this.clouds) {
       const d = c.userData;

@@ -6,7 +6,8 @@ import {
   makeSky, makeMountains, TerrainMesh, Props, Snowfall, Atmosphere, makeLodge, makeSign, SUN_DIR, HAZE,
 } from './env.js';
 import { createRiderModel } from './riderModel.js';
-import { Tracks, Spray } from './fx.js';
+import { Tracks, Spray, Powder } from './fx.js';
+import { Crowd, animateRider, newVis } from './npc.js';
 import { Game } from './game.js';
 import { SnowAudio } from './audio.js';
 
@@ -68,6 +69,8 @@ const model = createRiderModel();
 scene.add(model.root);
 const tracks = new Tracks(scene);
 const spray = new Spray(scene);
+const powder = new Powder(scene);
+const crowd = new Crowd(scene, 7);
 const audio = new SnowAudio();
 
 // ------------------------------------------------------------------ world streaming
@@ -106,7 +109,7 @@ const vibrate = (ms) => { try { navigator.vibrate && navigator.vibrate(ms); } ca
 let game = null;
 game = new Game(rider, (ev) => {
   if (ev.kind === 'gateState') { props.gateState.set(ev.k, ev.state); props.paintGates(); return; }
-  if (ev.kind === 'crash') { vibrate(80); audio.thump(1.2); spray.burst([rider.p[0], rider.p[1] + 0.3, rider.p[2]], 140); return; }
+  if (ev.kind === 'crash') { vibrate(80); audio.thump(1.2); spray.burst([rider.p[0], rider.p[1] + 0.3, rider.p[2]], 140); powder.burst([rider.p[0], rider.p[1] + 0.3, rider.p[2]], 18, 1.3); return; }
   if (ev.kind === 'gate') { audio.ding(true); vibrate(15); }
   if (ev.kind === 'carve') audio.ding(false);
   const txt = ev.pts ? `${ev.label}  +${ev.pts}${ev.mult > 1 ? ` (×${ev.mult.toFixed(2).replace(/0$/, '')})` : ''}` : ev.label;
@@ -182,7 +185,7 @@ $('cambtn').addEventListener('click', () => {
   try { localStorage.setItem('sb_cam', String(camMode)); } catch {}
 });
 $('sndbtn').addEventListener('click', () => { audio.start(); audio.setOn(!audio.on); $('sndbtn').textContent = audio.on ? '🔊' : '🔇'; });
-$('reset').addEventListener('click', () => { rider.reset(); tracks.clear(); game.reset(); camInit = false; rebuildWorld(); });
+$('reset').addEventListener('click', () => { rider.reset(); tracks.clear(); game.reset(); camInit = false; rebuildWorld(); crowd.reset(rider); });
 $('helpbtn').addEventListener('click', () => $('help').classList.toggle('show'));
 $('help').addEventListener('click', () => $('help').classList.remove('show'));
 
@@ -269,41 +272,17 @@ function updateCamera(dt) {
 }
 
 // ------------------------------------------------------------------ rider visuals
-const _n = new THREE.Vector3(), _f = new THREE.Vector3(), _l = new THREE.Vector3(), _mat = new THREE.Matrix4();
-const visN = new THREE.Vector3(0, 1, 0);
-const vis = { edge: 0, lean: 0, crouch: 0.3, crash: 0, drag: 0, arms: 0.3, air: 0, twist: 0.4 };
+const vis = newVis();
 let wasGrounded = true;
 function updateRiderVisual(dt) {
   const p = rider.p, t = rider.tel;
-  _n.set(rider.n[0], rider.n[1], rider.n[2]);
-  if (!rider.grounded) _n.set(0, 1, 0).lerp(_n, 0.5).normalize();
-  visN.lerp(_n, 1 - Math.exp(-dt * 12)).normalize();
-  _f.set(Math.sin(rider.yaw), 0, Math.cos(rider.yaw));
-  _f.addScaledVector(visN, -_f.dot(visN)).normalize();
-  _l.crossVectors(visN, _f).normalize();
-  _mat.makeBasis(_l, visN, _f);
-  model.root.quaternion.setFromRotationMatrix(_mat);
-  model.root.position.set(p[0], p[1], p[2]);
-  const crashed = rider.crashT > 0;
-  const k = (rate) => 1 - Math.exp(-dt * rate);
-  vis.crash += ((crashed ? 1 : 0) - vis.crash) * k(crashed ? 9 : 4);
-  vis.edge += (rider.edge - vis.edge) * k(20);
-  // body inclination balances the lateral acceleration
-  let leanT = rider.grounded ? Math.atan(clamp(t.latG, -2.2, 2.2)) * 0.85 : vis.edge * 0.3;
-  leanT = leanT * (1 - vis.crash) + vis.crash * (rider.edge >= 0 ? 1.35 : -1.35);
-  vis.lean += (leanT - vis.lean) * k(10);
-  const tuck = Math.max(0, -input.pull);
-  const crouchT = clamp(0.25 + 0.45 * tuck + 0.15 * Math.min(1.6, Math.abs(t.latG)) + 0.3 * (t.brake || 0) + (rider.grounded ? 0 : 0.35) + vis.crash * 0.4, 0, 1);
-  vis.crouch += (crouchT - vis.crouch) * k(8);
-  const eurocarve = rider.grounded && !crashed && rider.edge > 0.95 && rider.mode === MODES.carve ? 1 : 0;
-  vis.drag += (eurocarve - vis.drag) * k(6);
-  vis.arms += ((rider.grounded ? 0.25 + 0.4 * Math.min(1, t.skid / 3) : 0.85) - vis.arms) * k(6);
-  // upper body faces where you're going: rotate toward the nose (or tail when switch)
-  const twistT = (rider.travel > 0 ? 0.55 : -0.55) + 0.25 * clamp(t.omega, -1, 1) * rider.travel;
-  vis.twist += (twistT - vis.twist) * k(5);
-  model.pose({ edge: vis.edge * (1 - vis.crash), lean: vis.lean, crouch: vis.crouch, twist: vis.twist, arms: vis.arms, drag: vis.drag, crash: vis.crash, air: rider.grounded ? 0 : 1, fore: tuck * 0.6 });
+  animateRider(model, rider, vis, input, dt);
   // landing feedback
-  if (rider.grounded && !wasGrounded && t.landed > 2) { audio.thump(Math.min(1.5, t.landed / 6)); vibrate(Math.min(60, t.landed * 6)); spray.burst([p[0], p[1], p[2]], Math.min(120, t.landed * 15)); }
+  if (rider.grounded && !wasGrounded && t.landed > 2) {
+    audio.thump(Math.min(1.5, t.landed / 6)); vibrate(Math.min(60, t.landed * 6));
+    spray.burst([p[0], p[1], p[2]], Math.min(120, t.landed * 15));
+    powder.burst([p[0], p[1] + 0.2, p[2]], Math.min(14, 3 + t.landed * 1.5), 0.8);
+  }
   wasGrounded = rider.grounded;
 }
 
@@ -325,15 +304,19 @@ function frame(now) {
   updateRiderVisual(dt);
   tracks.update(rider, dt);
   spray.fromRider(rider, shownMode.key, dt);
+  powder.fromRider(rider, shownMode.key, dt);
+  crowd.update(dt, rider, { powder, spray }, () => { audio.thump(1.3); vibrate(120); });
   spray.update(dt);
+  powder.update(dt, [snowfall.wind ? 0.6 * Math.sin(atmos.clock * 0.17) : 0.4, -0.3]);
   props.update(dt);
   atmos.update(dt, camera.position);
   updateCamera(dt);
-  snowfall.update(dt, camera.position);
+  snowfall.update(dt, camera.position, atmos.weather);
   lodge.userData.win.emissiveIntensity = 0.2 + 1.8 * (1 - Math.min(1, SUN_DIR.y * 3));
+  powder.mat.uniforms.uLight.value.copy(sun.color).lerp(new THREE.Color(1, 1, 1), 0.6);
   audio.update(rider, shownMode.key, dt);
   updateHUD(dt);
   renderer.render(scene, camera);
 }
 requestAnimationFrame(frame);
-window.__game = { rider, input, keys, game, atmos, tracks, camera, scene };
+window.__game = { rider, input, keys, game, atmos, tracks, camera, scene, crowd };

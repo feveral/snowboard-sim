@@ -1,7 +1,7 @@
 // Tracks in the snow (carve grooves / skid scrapes) and snow spray.
 import * as THREE from 'three';
 import { height } from './terrain.js';
-import { makePointsMaterial, DOT } from './env.js';
+import { makePointsMaterial, DOT, FOGREF } from './env.js';
 import { smoothstep } from './noise.js';
 
 function stripTexture(draw, w, h) {
@@ -94,9 +94,9 @@ class Ribbon {
 }
 
 export class Tracks {
-  constructor(scene) {
-    this.groove = new Ribbon(scene, grooveTex, 6000, 1);
-    this.scrape = new Ribbon(scene, scrapeTex, 4000, 0.95);
+  constructor(scene, scale = 1) {
+    this.groove = new Ribbon(scene, grooveTex, Math.round(6000 * scale), 1);
+    this.scrape = new Ribbon(scene, scrapeTex, Math.round(4000 * scale), 0.95);
     this.acc = 0;
   }
   clear() { this.groove.clear(); this.scrape.clear(); }
@@ -182,7 +182,7 @@ export class Spray {
     }
     for (const k of ['position', 'alpha', 'psize']) this.geo.attributes[k].needsUpdate = true;
   }
-  fromRider(rider, mode, dt) {
+  fromRider(rider, mode, dt, scale = 1) {
     const t = rider.tel;
     if (!rider.grounded || rider.crashT > 0 || t.speed < 2) return;
     const p = rider.p, r = rider.r, f = rider.f, n = rider.n;
@@ -199,9 +199,113 @@ export class Spray {
       rate = t.speed * 3; dir = [-f[0], 0, -f[2]]; spread = 0.8; up = 1.2; // powder puff
     }
     if (rate <= 0) return;
-    this.acc += rate * dt;
+    this.acc += rate * dt * scale;
     const c = Math.floor(this.acc); this.acc -= c;
     const tail = [p[0] - f[0] * 0.45 + n[0] * 0.05, p[1] + 0.05, p[2] - f[2] * 0.45];
     this.emit(c, tail, dir, spread, up, [rider.v[0] * 0.55, 0, rider.v[2] * 0.55]);
+  }
+}
+
+// ---------------------------------------------------------------- powder smoke
+// Big soft billows that hang in the air, grow and drift: the "smoke" of a hockey stop,
+// a deep carve's rooster tail or riding through soft snow.
+function puffTexture() {
+  const S = 128, c = document.createElement('canvas'); c.width = c.height = S;
+  const g = c.getContext('2d');
+  for (let i = 0; i < 40; i++) {
+    const a = Math.random() * 6.283, r = Math.random() * 30;
+    const x = 64 + Math.cos(a) * r, y = 64 + Math.sin(a) * r, rad = 14 + Math.random() * 26;
+    const gr = g.createRadialGradient(x, y, 0, x, y, rad);
+    gr.addColorStop(0, 'rgba(255,255,255,0.16)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, S, S);
+  }
+  const t = new THREE.CanvasTexture(c);
+  return t;
+}
+export class Powder {
+  constructor(scene) {
+    const N = this.N = 420;
+    this.pos = new Float32Array(N * 3); this.vel = new Float32Array(N * 3);
+    this.life = new Float32Array(N); this.max = new Float32Array(N);
+    this.a0 = new Float32Array(N); this.grow = new Float32Array(N);
+    this.alpha = new Float32Array(N); this.size = new Float32Array(N); this.rot = new Float32Array(N);
+    for (let i = 0; i < N; i++) this.pos[i * 3 + 1] = -1e5;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
+    g.setAttribute('alpha', new THREE.BufferAttribute(this.alpha, 1));
+    g.setAttribute('psize', new THREE.BufferAttribute(this.size, 1));
+    g.setAttribute('rot', new THREE.BufferAttribute(this.rot, 1));
+    this.geo = g;
+    this.mat = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false,
+      uniforms: { map: { value: puffTexture() }, fogColor: { value: FOGREF.color }, uLight: { value: new THREE.Color(1, 1, 1) }, uShade: { value: new THREE.Color(0.78, 0.84, 0.94) } },
+      vertexShader: `attribute float alpha; attribute float psize; attribute float rot; varying float vA; varying float vFog; varying float vRot;
+        void main(){ vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * mv;
+          gl_PointSize = min(psize * (300.0 / max(-mv.z, 0.2)), 420.0); vA = alpha * smoothstep(0.3, 2.0, -mv.z); vFog = -mv.z; vRot = rot; }`,
+      fragmentShader: `uniform sampler2D map; uniform vec3 fogColor; uniform vec3 uLight; uniform vec3 uShade; varying float vA; varying float vFog; varying float vRot;
+        void main(){ vec2 c = gl_PointCoord - 0.5; float s = sin(vRot), co = cos(vRot); vec2 uv = vec2(c.x*co - c.y*s, c.x*s + c.y*co) + 0.5;
+          float a = texture2D(map, uv).a * vA; if (a < 0.004) discard;
+          vec3 col = mix(uShade, uLight, clamp(1.0 - gl_PointCoord.y * 0.8, 0.0, 1.0));
+          float f = smoothstep(40.0, 240.0, vFog);
+          gl_FragColor = vec4(mix(col, fogColor, f), a); }`,
+    });
+    this.pts = new THREE.Points(g, this.mat);
+    this.pts.frustumCulled = false;
+    this.pts.renderOrder = 3;
+    scene.add(this.pts);
+    this.next = 0;
+  }
+  emit(o, v, size, grow, life, alpha, jitter = 0.4) {
+    const i = this.next; this.next = (this.next + 1) % this.N;
+    this.pos[i * 3] = o[0] + (Math.random() - 0.5) * jitter;
+    this.pos[i * 3 + 1] = o[1] + Math.random() * jitter * 0.5;
+    this.pos[i * 3 + 2] = o[2] + (Math.random() - 0.5) * jitter;
+    this.vel[i * 3] = v[0]; this.vel[i * 3 + 1] = v[1]; this.vel[i * 3 + 2] = v[2];
+    this.size[i] = size; this.grow[i] = grow;
+    this.max[i] = this.life[i] = life * (0.75 + Math.random() * 0.5);
+    this.a0[i] = alpha; this.rot[i] = Math.random() * 6.283;
+  }
+  burst(p, n, strength = 1) {
+    for (let k = 0; k < n; k++) {
+      const a = Math.random() * 6.283, sp = (1 + Math.random() * 2.5) * strength;
+      this.emit(p, [Math.cos(a) * sp, 0.6 + Math.random() * 1.5 * strength, Math.sin(a) * sp], 0.8 + Math.random() * 0.8, 1.6 * strength, 2.2, 0.55);
+    }
+  }
+  update(dt, wind = [0.4, 0]) {
+    for (let i = 0; i < this.N; i++) {
+      if (this.life[i] <= 0) continue;
+      this.life[i] -= dt;
+      if (this.life[i] <= 0) { this.pos[i * 3 + 1] = -1e5; this.alpha[i] = 0; continue; }
+      const k = Math.exp(-2.2 * dt);
+      this.vel[i * 3] = this.vel[i * 3] * k + wind[0] * (1 - k);
+      this.vel[i * 3 + 1] = this.vel[i * 3 + 1] * k + 0.15 * (1 - k);
+      this.vel[i * 3 + 2] = this.vel[i * 3 + 2] * k + wind[1] * (1 - k);
+      this.pos[i * 3] += this.vel[i * 3] * dt; this.pos[i * 3 + 1] += this.vel[i * 3 + 1] * dt; this.pos[i * 3 + 2] += this.vel[i * 3 + 2] * dt;
+      this.size[i] += this.grow[i] * dt * (this.life[i] / this.max[i] + 0.3);
+      this.rot[i] += dt * 0.3;
+      const u = this.life[i] / this.max[i];
+      this.alpha[i] = this.a0[i] * Math.min(1, (1 - u) * 6) * Math.pow(u, 1.3);
+    }
+    for (const k of ['position', 'alpha', 'psize', 'rot']) this.geo.attributes[k].needsUpdate = true;
+  }
+  fromRider(rider, mode, dt, scale = 1) {
+    const t = rider.tel;
+    if (!rider.grounded || t.speed < 2.5) return;
+    this.acc = this.acc || 0;
+    const p = rider.p, r = rider.r, f = rider.f;
+    let rate = 0, size = 0.9, grow = 1.4, life = 1.6, alpha = 0.32, out = 0;
+    if (t.skid > 0.8) { rate = Math.min(45, t.skid * t.speed * 0.9); size = 0.8 + t.skid * 0.12; grow = 1.6 + t.skid * 0.2; alpha = 0.3 + Math.min(0.25, t.skid * 0.04); out = 1; }
+    else if (mode === 'carve' && Math.abs(t.latG) > 0.7) { rate = t.speed * 0.6 * Math.abs(t.latG); size = 0.6; grow = 1.1; alpha = 0.2; out = 0.6; }
+    if (t.off > 0.5) { rate += t.speed * 1.1; alpha = Math.max(alpha, 0.38); grow = Math.max(grow, 1.8); life = 2.2; }
+    if (rate <= 0) return;
+    this.acc += rate * dt * scale;
+    const vrs = Math.sign(rider.v[0] * r[0] + rider.v[2] * r[2]) || -Math.sign(rider.edge) || 1;
+    while (this.acc >= 1) {
+      this.acc -= 1;
+      const o = [p[0] - f[0] * 0.5, p[1] + 0.15, p[2] - f[2] * 0.5];
+      const s = 0.6 + Math.random();
+      const v = [rider.v[0] * 0.35 + r[0] * vrs * out * 2.2 * s, 0.6 + Math.random() * 1.2, rider.v[2] * 0.35 + r[2] * vrs * out * 2.2 * s];
+      this.emit(o, v, size, grow, life, alpha);
+    }
   }
 }

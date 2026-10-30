@@ -1,5 +1,5 @@
 // Scoring: rate every turn (carve vs skid), slalom gates, air time, combos.
-import { gatesInRange, GATE_HALF, activeBranch, pisteInfo } from './terrain.js';
+import { gatesInRange, GATE_HALF, pisteInfo, sectionAt, pisteCenter } from './terrain.js';
 
 const D = 180 / Math.PI;
 
@@ -9,6 +9,8 @@ export class Game {
     this.emit = onEvent;
     this.reset();
     try { this.best = +localStorage.getItem('sb_best') || 0; } catch { this.best = 0; }
+    try { this.found = JSON.parse(localStorage.getItem('sb_found') || '{"trails":[],"spots":[]}'); } catch { this.found = { trails: [], spots: [] }; }
+    this.foundTrails = new Set(this.found.trails); this.foundSpots = new Set(this.found.spots);
   }
   reset() {
     this.score = 0; this.combo = 0; this.bestCombo = 0;
@@ -16,7 +18,7 @@ export class Game {
     this.gateDone = new Map();
     this.airStartYaw = 0; this.wasAir = false; this.wasCrash = false;
     this.cleanTurns = 0; this.gatesHit = 0; this.gatesMissed = 0;
-    this.lastBranch = null;
+    this.onTrail = null; this.onTrailDist = 0;
   }
   get mult() { return 1 + Math.min(3, this.combo * 0.25); }
   add(pts, label, kind) {
@@ -125,16 +127,27 @@ export class Game {
     }
     this.lastZ = z1;
 
-    // ---- entering a side run
-    const b = activeBranch(r.p[2]);
-    const pi = b ? pisteInfo(r.p[0], r.p[2]) : null;
-    const onBranch = pi && pi.branch && pi.branch.k === b.k && pi.w > 0.7;
-    if (onBranch && this.lastBranch !== b.k) {
-      this.lastBranch = b.k;
-      this.emit({ kind: 'info', label: `進入 ${b.type.name}` });
-      this.add(300, `新雪道：${b.type.en}`, 'bonus');
+    // ---- exploring: ride a run for 60 m to discover it; find the hidden spots
+    const pi = pisteInfo(r.p[0], r.p[2]);
+    const tn = pi.trail && pi.d < pi.trail.type.W / 2 + 2 ? pi.trail.name : null;
+    if (tn && tn === this.onTrail) this.onTrailDist += ds;
+    else { this.onTrail = tn; this.onTrailDist = 0; }
+    this.currentTrail = pi.trail;
+    if (tn && this.onTrailDist > 60 && !this.foundTrails.has(tn)) {
+      this.foundTrails.add(tn); this.save();
+      this.emit({ kind: 'info', label: `發現雪道：${tn}（${pi.trail.type.label}）` });
+      this.add(250, '新雪道', 'bonus');
+    }
+    const S = sectionAt(r.p[2]).spot;
+    const sx = pisteCenter(S.z) + S.off;
+    const key = `${S.k}`;
+    if (!this.foundSpots.has(key) && Math.hypot(r.p[0] - sx, r.p[2] - S.z) < 12) {
+      this.foundSpots.add(key); this.save();
+      this.emit({ kind: 'info', label: `★ 發現秘境：${S.name}` });
+      this.add(800, '秘境', 'bonus');
     }
   }
+  save() { try { localStorage.setItem('sb_found', JSON.stringify({ trails: [...this.foundTrails], spots: [...this.foundSpots] })); } catch {} }
   finishTurn(T) {
     if (T.dist < 6 || this.rider.tel.speed < 3) return;
     const cf = T.carve / T.dist, sf = T.skid / T.dist;

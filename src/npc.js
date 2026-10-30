@@ -2,7 +2,7 @@
 // "physics state -> animated model" mapping.
 import * as THREE from 'three';
 import { Rider, MODES } from './physics.js';
-import { terrain, pisteCenter, activeBranch, branchCenter, height, parkAt, PARK_HALF, kickerAt, KICK_SPACING } from './terrain.js';
+import { terrain, pisteCenter, height, parkAt, PARK_HALF, kickerAt, KICK_SPACING, trailsAt, trailX, SEC } from './terrain.js';
 import { createRiderModel, createSkierModel, OUTFITS } from './riderModel.js';
 import { Tracks } from './fx.js';
 import { clamp } from './noise.js';
@@ -80,16 +80,16 @@ class Bot {
     this.input = { steer: 0, pull: 0 };
     this.dir = Math.random() < 0.5 ? 1 : -1;
     this.laneOff = (Math.random() * 2 - 1) * this.style.lane;
-    this.takeBranch = Math.random() < 0.45;
+    this.trail = null;
     this.acc = 0;
     this.steerS = 0;
   }
   spawn(z, playerX) {
     const r = this.rider;
     r.reset(Math.max(6, z));
-    let x = pisteCenter(r.p[2]) + this.laneOff;
-    const b = activeBranch(r.p[2]);
-    if (b && this.takeBranch) x = branchCenter(b, r.p[2]) + this.laneOff * 0.6;
+    const ts = trailsAt(r.p[2]);
+    this.trail = ts[Math.floor(Math.random() * ts.length)];
+    let x = trailX(this.trail, r.p[2]) + this.laneOff * Math.min(1, this.trail.type.W / 30);
     if (Math.abs(x - playerX) < 3) x += 6;
     r.p[0] = x; r.p[1] = terrain.height(x, r.p[2]);
     r._frame();
@@ -121,9 +121,14 @@ class Bot {
       this.input.pull = r.tel.speed > (line < 0 ? 17 : 13) ? 0.25 : -0.5;
       return;
     }
-    let lane = pisteCenter(z) + this.laneOff;
-    const b = activeBranch(z);
-    if (b && this.takeBranch) lane = branchCenter(b, z) + this.laneOff * 0.6;
+    // stay on our trail; at a junction pick one of the runs that continue from where we are
+    const ts = trailsAt(z);
+    if (!this.trail || this.trail.k !== Math.floor(z / SEC)) {
+      const endNode = this.trail ? this.trail.end : 2;
+      const cand = ts.filter((t) => t.start === endNode);
+      this.trail = (cand.length ? cand : ts)[Math.floor(Math.random() * (cand.length || ts.length))];
+    }
+    const lane = trailX(this.trail, z) + this.laneOff * Math.min(1, this.trail.type.W / 30) * 0.8;
     const a = wrap(r.yaw - r.fallLineYaw()) * r.travel; // + heading toward +x
     const sp = r.tel.speed;
     // wider turns when too fast

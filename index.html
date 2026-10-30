@@ -76,6 +76,16 @@
   #help .panel { width: min(380px, 90vw); max-height: 80vh; overflow: auto; padding: 16px 18px; font-size: 13.5px; line-height: 1.6; background: rgba(255,255,255,0.94); }
   #help h3 { margin: 0 0 6px; font-size: 16px; }
   #help h4 { margin: 12px 0 4px; font-size: 13.5px; }
+  #mapov { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(15,27,45,0.45); z-index: 6; padding: calc(10px + env(safe-area-inset-top)) 10px calc(10px + env(safe-area-inset-bottom)); }
+  #mapov.show { display: flex; }
+  .mapwrap { width: min(520px, 96vw); height: 100%; max-height: 900px; display: flex; flex-direction: column; background: rgba(255,255,255,0.96); padding: 10px; gap: 6px; }
+  .maphead { display: flex; justify-content: space-between; align-items: baseline; font-size: 15px; gap: 8px; }
+  .maphead span { font-size: 12.5px; opacity: 0.75; }
+  #mapcv { flex: 1; width: 100%; min-height: 0; border-radius: 10px; background: #eef3f9; }
+  .mapfoot { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+  .maplegend i { display: inline-block; width: 14px; height: 4px; border-radius: 2px; margin: 0 3px 2px 6px; vertical-align: middle; }
+  .mapclose { font-size: 11px; opacity: 0.55; text-align: center; }
+  .tr { flex-wrap: wrap; justify-content: flex-end; max-width: 62vw; }
   .abtn { flex: 1; width: auto; height: 34px; font-size: 13px; border-radius: 9px; background: rgba(15,27,45,0.08); }
   .abtn.on { background: #0c8bd9; color: #fff; }
   .chip { display: inline-block; padding: 0 6px; border-radius: 5px; color: #fff; font-weight: 700; font-size: 12px; }
@@ -100,6 +110,7 @@
     <div class="mini">最佳 <b id="best">0</b></div>
   </div>
   <div class="tr">
+    <button class="panel" id="mapbtn" aria-label="雪道地圖">🗺</button>
     <button class="panel wide" id="cambtn" aria-label="視角">🎥高</button>
     <button class="panel" id="sndbtn" aria-label="聲音">🔊</button>
     <button class="panel" id="helpbtn" aria-label="說明">?</button>
@@ -132,6 +143,9 @@
     <span style="opacity:.7">放開 = 板子自動轉回正前方直滑。穩穩壓住左右、不要下拉，就是 carving。</span></div>
   <div id="stick"><div id="knob"></div></div>
 </div>
+<div id="mapov"><div class="mapwrap panel"><div class="maphead"><b>雪道地圖</b><span id="maptrail"></span></div><canvas id="mapcv"></canvas>
+  <div class="mapfoot"><span id="mapstats"></span><span class="maplegend"><i style="background:#2a9d4b"></i>綠 <i style="background:#1f5fd6"></i>藍 <i style="background:#111"></i>黑/林間 <i style="background:#d6333f"></i>粉雪碗 · ? 未發現 · ★ 秘境</span></div>
+  <div class="mapclose">點任何地方關閉・遊戲暫停中</div></div></div>
 <div id="help"><div class="panel">
   <h3>物理輔助</h3>
   <div id="assistrow" style="display:flex;gap:6px;margin:4px 0 10px">
@@ -149,6 +163,8 @@
   <b>往上推</b>：壓低身體減少風阻。<br>
   <b>快速往上一撥</b>：Ollie 起跳。在跳台唇口撥，可以跳更高。<br>
   <b>空中</b>：左右 = 轉體（180/360/540…），放開後會保持轉動並對準最近的板頭或板尾落地；往下拉 = 抓板（Indy、Melon…），落地前記得放開。
+  <h4>探索</h4>
+  山上有很多條雪道，每 700m 會有岔路口和路牌（綠／藍／黑・蘑菇／林間道／粉雪碗），會分開、交叉、再匯合，中間隔著樹林。沿著一條雪道滑 60m 就算「發現」，每一段還藏著一個<b>秘境</b>（黃旗＋石堆），通常在雪道外的樹林或粉雪裡。按右上 🗺 看雪道地圖：你在哪、哪些還沒去過（?）。
   <h4>公園 Terrain Park</h4>
   從起點往下約 560m（之後每 2.1km 一個）。右邊是小跳台線（S/M），左邊是大跳台線（M/L/XL），藍線是唇口、橘色標記是桌面盡頭；最後有兩個可以直接滑上去的 Box（板子直 = 50-50，往下拉讓板子橫 = Boardslide）和一段 rollers。大跳台約 45–60 km/h 進去剛好。
   <h4>滑行判定（滑移角 = 板頭方向 vs 前進方向）</h4>

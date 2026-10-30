@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { terrain, height, lodgeNear, branchAt, BRANCH_PERIOD, pisteCenter, forestDensity } from './terrain.js';
+import { terrain, height, lodgeNear, pisteCenter, forestDensity, sectionAt, SEC, NODES, trailX, PARK_START, PARK_PERIOD, PARK_LEN, liftX } from './terrain.js';
 import { Rider, MODES } from './physics.js';
 import { clamp } from './noise.js';
 import {
@@ -55,14 +55,48 @@ window.__far = farTerrain;
 const props = new Props(scene);
 const parkVis = new ParkVisuals(scene);
 const lodge = makeLodge(); scene.add(lodge);
-const signs = [0, 1, 2].map((i) => {
-  const types = [
-    [{ text: '主線 Main →', color: '#1f5fd6', shape: 'square' }, { text: '← 蘑菇坡 Moguls', color: '#111', shape: 'diamond' }],
-    [{ text: '主線 Main →', color: '#1f5fd6', shape: 'square' }, { text: '← 林間道 Trees', color: '#1f5fd6', shape: 'square' }],
-    [{ text: '主線 Main →', color: '#1f5fd6', shape: 'square' }, { text: '← 陡坡 The Wall', color: '#111', shape: 'diamond' }],
-  ];
-  const s = makeSign(types[i]); s.visible = false; scene.add(s); return s;
-});
+// junction signs + hidden-spot markers are rebuilt with the world
+const signGroup = new THREE.Group(); scene.add(signGroup);
+const arrowFor = (t) => { const d = NODES[t.end] - NODES[t.start]; return d > 20 ? ' ←' : d < -20 ? ' →' : ' ↓'; };
+function spotMarker(name) {
+  const g = new THREE.Group();
+  const rockM = new THREE.MeshStandardMaterial({ color: 0x6d6a66, roughness: 0.95 });
+  for (let i = 0; i < 4; i++) { const r = new THREE.Mesh(new THREE.DodecahedronGeometry(0.45 - i * 0.08, 0), rockM); r.position.y = 0.3 + i * 0.5; r.rotation.y = i; r.castShadow = true; g.add(r); }
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 3.2, 6), new THREE.MeshStandardMaterial({ color: 0x333333 }));
+  pole.position.set(0.5, 1.6, 0); g.add(pole);
+  const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.55), new THREE.MeshStandardMaterial({ color: 0xffc21a, side: THREE.DoubleSide, emissive: 0x553300 }));
+  flag.position.set(0.95, 2.9, 0); g.add(flag);
+  const sign = makeSign([{ text: '秘境 ' + name, color: '#ffc21a', shape: 'circle' }]);
+  sign.scale.setScalar(0.8); sign.position.set(-1.6, 0, 0); g.add(sign);
+  return g;
+}
+function rebuildSigns(cz, R) {
+  for (const c of [...signGroup.children]) { signGroup.remove(c); c.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material && o.material.map) o.material.map.dispose(); }); }
+  const k0 = Math.floor((cz - R) / SEC), k1 = Math.floor((cz + R) / SEC) + 1;
+  for (let k = Math.max(0, k0); k <= k1; k++) {
+    const sec = sectionAt(k * SEC + 1);
+    const zj = k * SEC + 22;
+    if (Math.abs(zj - cz) < R) {
+      const byNode = new Map();
+      for (const t of sec.trails) { if (!byNode.has(t.start)) byNode.set(t.start, []); byNode.get(t.start).push(t); }
+      for (const [node, ts] of byNode) {
+        const lines = ts.slice(0, 3).map((t) => ({ text: t.name + arrowFor(t), color: t.type.color, shape: t.type.shape }));
+        const sg = makeSign(lines);
+        if (lines.length > 2) { sg.children[0].scale.y = 1.4; sg.children[0].position.y = 2.5; }
+        const x = pisteCenter(zj) + NODES[node] + 9;
+        sg.position.set(x, height(x, zj), zj); sg.rotation.y = Math.PI;
+        signGroup.add(sg);
+      }
+    }
+    const S = sec.spot;
+    if (Math.abs(S.z - cz) < R) {
+      const m = spotMarker(S.name);
+      const x = pisteCenter(S.z) + S.off;
+      m.position.set(x, height(x, S.z), S.z); m.rotation.y = Math.PI;
+      signGroup.add(m);
+    }
+  }
+}
 const snowfall = new Snowfall(scene);
 const atmos = new Atmosphere(scene, sky, mountains, sun, hemi, snowfall);
 
@@ -86,16 +120,7 @@ function rebuildWorld() {
   const L = lodgeNear(cz);
   lodge.visible = !!L && Math.abs(L.z - cz) < R;
   if (L) { lodge.position.set(L.x, height(L.x, L.z) - 0.6, L.z); lodge.rotation.y = 0.15; }
-  signs.forEach((s) => (s.visible = false));
-  const k = Math.floor((cz - 360) / BRANCH_PERIOD);
-  for (const kk of [k, k + 1]) {
-    const b = branchAt(kk);
-    if (!b) continue;
-    const z = b.zs + 25, x = pisteCenter(z) + 15;
-    if (Math.abs(z - cz) > R) continue;
-    const s = signs[kk % 3];
-    s.visible = true; s.position.set(x, height(x, z), z); s.rotation.y = Math.PI;
-  }
+  if (!rebuildWorld.lastSignZ || Math.abs(cz - rebuildWorld.lastSignZ) > 60) { rebuildSigns(cz, R); rebuildWorld.lastSignZ = cz; }
 }
 
 // ------------------------------------------------------------------ game + HUD
@@ -202,6 +227,82 @@ $('cambtn').addEventListener('click', () => {
 $('sndbtn').addEventListener('click', () => { audio.start(); audio.setOn(!audio.on); $('sndbtn').textContent = audio.on ? '🔊' : '🔇'; });
 $('reset').addEventListener('click', () => { rider.reset(); tracks.clear(); game.reset(); camInit = false; rebuildWorld(); crowd.reset(rider); });
 $('helpbtn').addEventListener('click', () => $('help').classList.toggle('show'));
+// ---- trail map
+let mapOpen = false;
+$('mapbtn').addEventListener('click', () => { mapOpen = true; $('mapov').classList.add('show'); drawMap(); });
+$('mapov').addEventListener('click', () => { mapOpen = false; $('mapov').classList.remove('show'); last = performance.now(); });
+function drawMap() {
+  const cv = $('mapcv'), dpr = Math.min(2, window.devicePixelRatio || 1);
+  const W = cv.width = Math.round(cv.clientWidth * dpr), H = cv.height = Math.round(cv.clientHeight * dpr);
+  const g = cv.getContext('2d');
+  const px = rider.p[0], pz = rider.p[2];
+  const z0 = pz - 220, z1 = pz + 1300, xr = 280;
+  // downhill is down the page; +x is to the left (as seen riding down)
+  const sx = (x) => W / 2 - (x - px) / xr * (W * 0.47), sy = (z) => (z - z0) / (z1 - z0) * H;
+  g.fillStyle = '#eef3f9'; g.fillRect(0, 0, W, H);
+  // forest: sample coarsely, then let the browser smooth it when scaling up
+  const fw = 60, fh = Math.round(60 * H / W);
+  const fc = document.createElement('canvas'); fc.width = fw; fc.height = fh;
+  const fg = fc.getContext('2d'), img = fg.createImageData(fw, fh);
+  for (let y = 0; y < fh; y++) for (let x = 0; x < fw; x++) {
+    const wx = px + (fw / 2 - x) / (fw * 0.47) * xr, wz = z0 + y / fh * (z1 - z0);
+    const d = Math.min(1, forestDensity(wx, wz) * 1.1), i = (y * fw + x) * 4;
+    img.data[i] = 40; img.data[i + 1] = 80; img.data[i + 2] = 60; img.data[i + 3] = Math.max(0, d - 0.15) * 230;
+  }
+  fg.putImageData(img, 0, 0);
+  g.imageSmoothingEnabled = true; g.drawImage(fc, 0, 0, W, H);
+  // park + lift
+  for (let k = 0; k < 50; k++) {
+    const pz0 = PARK_START + k * PARK_PERIOD; if (pz0 > z1) break; if (pz0 + PARK_LEN < z0) continue;
+    g.fillStyle = 'rgba(255,140,40,0.25)';
+    g.beginPath(); for (let z = pz0; z <= pz0 + PARK_LEN; z += 20) g.lineTo(sx(pisteCenter(z) + 17), sy(z)); for (let z = pz0 + PARK_LEN; z >= pz0; z -= 20) g.lineTo(sx(pisteCenter(z) - 17), sy(z)); g.fill();
+    g.fillStyle = '#b4560f'; g.font = `bold ${11 * dpr}px sans-serif`; g.fillText('PARK', sx(pisteCenter(pz0 + 40)) + 14 * dpr, sy(pz0 + 40));
+  }
+  g.setLineDash([6 * dpr, 5 * dpr]); g.strokeStyle = 'rgba(60,60,70,0.7)'; g.lineWidth = 1.5 * dpr; g.beginPath();
+  for (let z = z0; z <= z1; z += 20) g.lineTo(sx(liftX(z)), sy(z)); g.stroke(); g.setLineDash([]);
+  // trails
+  const k0 = Math.max(0, Math.floor(z0 / SEC)), k1 = Math.floor(z1 / SEC);
+  const labels = [];
+  for (const pass of [0, 1]) for (let k = k0; k <= k1; k++) {
+    for (const t of sectionAt(k * SEC + 1).trails) {
+      g.beginPath();
+      for (let z = k * SEC; z <= (k + 1) * SEC; z += 12) { const z2 = Math.min(z, (k + 1) * SEC - 0.01); g.lineTo(sx(trailX(t, z2)), sy(z2)); }
+      const w = Math.max(3, t.type.W / xr * W * 0.47);
+      if (pass === 0) { g.strokeStyle = '#ffffff'; g.lineWidth = w + 3 * dpr; g.stroke(); }
+      else {
+        const known = game.foundTrails.has(t.name) || t.main;
+        g.strokeStyle = t.type.key === 'bowl' ? 'rgba(214,51,63,0.55)' : t.type.color; g.globalAlpha = known ? 0.9 : 0.4;
+        g.lineWidth = Math.max(2 * dpr, w * 0.35); g.stroke(); g.globalAlpha = 1;
+        const zm = k * SEC + SEC * (0.25 + 0.13 * (t.id % 5));
+        if (zm > z0 && zm < z1) labels.push([t, sx(trailX(t, zm)), sy(zm), known]);
+      }
+    }
+  }
+  g.font = `bold ${11 * dpr}px -apple-system, sans-serif`; g.textAlign = 'center';
+  for (const [t, x, y, known] of labels) {
+    const txt = (known ? '' : '? ') + t.name;
+    g.lineWidth = 3 * dpr; g.strokeStyle = 'rgba(255,255,255,0.95)'; g.strokeText(txt, x, y - 6 * dpr);
+    g.fillStyle = known ? '#14181f' : '#6b7480'; g.fillText(txt, x, y - 6 * dpr);
+  }
+  // lodges + hidden spots
+  for (let z = z0; z < z1; z += 300) { const L = lodgeNear(z); if (L && L.z > z0 && L.z < z1) { g.fillStyle = '#7a4a2a'; g.fillRect(sx(L.x) - 5 * dpr, sy(L.z) - 5 * dpr, 10 * dpr, 10 * dpr); } }
+  for (let k = k0; k <= k1; k++) {
+    const S = sectionAt(k * SEC + 1).spot; const x = sx(pisteCenter(S.z) + S.off), y = sy(S.z);
+    const got = game.foundSpots.has(`${S.k}`);
+    g.font = `bold ${(got ? 18 : 15) * dpr}px sans-serif`; g.fillStyle = got ? '#e8a200' : '#5b6572';
+    g.lineWidth = 3 * dpr; g.strokeStyle = '#fff'; g.strokeText(got ? '★' : '?', x, y + 5 * dpr);
+    g.fillText(got ? '★' : '?', x, y + 5 * dpr);
+    if (got) { g.font = `${10 * dpr}px sans-serif`; g.fillText(S.name, x, y + 18 * dpr); }
+  }
+  // you
+  const hx = rider.v[0], hz = rider.v[2], hl = Math.hypot(hx, hz) || 1;
+  const ax = -hx / hl, ay = hz / hl, X = sx(px), Y = sy(pz);
+  g.fillStyle = '#ff5a1f'; g.strokeStyle = '#fff'; g.lineWidth = 2 * dpr; g.beginPath();
+  g.moveTo(X + ax * 11 * dpr, Y + ay * 11 * dpr); g.lineTo(X - ay * 7 * dpr - ax * 6 * dpr, Y + ax * 7 * dpr - ay * 6 * dpr); g.lineTo(X + ay * 7 * dpr - ax * 6 * dpr, Y - ax * 7 * dpr - ay * 6 * dpr); g.closePath(); g.fill(); g.stroke();
+  $('mapstats').textContent = `已發現雪道 ${game.foundTrails.size} 條 · 秘境 ${game.foundSpots.size} 個 · 已滑 ${(rider.stats.dist / 1000).toFixed(1)} km`;
+  const ct = game.currentTrail;
+  $('maptrail').textContent = ct ? `目前：${ct.name}（${ct.type.label}）` : '';
+}
 $('help').addEventListener('click', (e) => { if (e.target.closest('#assistrow')) return; $('help').classList.remove('show'); });
 let assist = 0.6;
 try { const a = localStorage.getItem('sb_assist'); if (a !== null) assist = +a; } catch {}
@@ -318,7 +419,7 @@ let last = performance.now(), acc = 0, paused = false;
 document.addEventListener('visibilitychange', () => { paused = document.hidden; last = performance.now(); });
 function frame(now) {
   requestAnimationFrame(frame);
-  if (paused) return;
+  if (paused || mapOpen) return;
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   readInput(dt);

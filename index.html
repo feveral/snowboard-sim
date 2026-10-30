@@ -75,6 +75,8 @@
   #help .panel { width: min(380px, 90vw); max-height: 80vh; overflow: auto; padding: 16px 18px; font-size: 13.5px; line-height: 1.6; background: rgba(255,255,255,0.94); }
   #help h3 { margin: 0 0 6px; font-size: 16px; }
   #help h4 { margin: 12px 0 4px; font-size: 13.5px; }
+  .abtn { flex: 1; width: auto; height: 34px; font-size: 13px; border-radius: 9px; background: rgba(15,27,45,0.08); }
+  .abtn.on { background: #0c8bd9; color: #fff; }
   .chip { display: inline-block; padding: 0 6px; border-radius: 5px; color: #fff; font-weight: 700; font-size: 12px; }
   @media (max-height: 520px) { #speed { font-size: 32px; } #mode { font-size: 17px; } #gauge { bottom: 8px; } }
 </style>
@@ -115,7 +117,7 @@
       <div id="needle"></div>
     </div>
     <div><div id="edgebig"><span id="edgeval">0°</span></div><div id="edgeside">FLAT</div></div>
-    <div class="kv"><span>滑移角</span><span id="beta">0°</span><span>側向G</span><span id="gval">0</span><span>半徑</span><span id="rad">—</span><span>雪面</span><span id="surf">壓雪道</span></div>
+    <div class="kv"><span>滑移角</span><span id="beta">0°</span><span>側向G</span><span id="gval">0</span><span>負重</span><span id="load">1.0g</span><span>半徑</span><span id="rad">—</span><span>雪面</span><span id="surf">壓雪道</span></div>
   </div>
   <div id="msg"></div>
   <div id="hint" class="panel"><b>單指拖曳操控</b>（任何位置按下即可）<br>
@@ -128,6 +130,11 @@
   <div id="stick"><div id="knob"></div></div>
 </div>
 <div id="help"><div class="panel">
+  <h3>物理輔助</h3>
+  <div id="assistrow" style="display:flex;gap:6px;margin:4px 0 10px">
+    <button class="abtn" data-a="1">高（新手）</button><button class="abtn" data-a="0.6">中</button><button class="abtn" data-a="0.2">低（真實）</button>
+  </div>
+  <div style="font-size:12.5px;opacity:.75;margin-bottom:8px">輔助越低：滑完不會自動擺正、反刃比較容易摔、空中轉體不會幫你停、落地角度要更準、能立的刃更依賴平衡。</div>
   <h3>怎麼玩</h3>
   單指在螢幕任何地方按住拖曳（一隻手就能玩），所有方向都是<b>相對畫面</b>：
   <h4>手勢</h4>
@@ -148,8 +155,11 @@
   <h4>計分</h4>
   每個彎都會評分：乾淨的 carve 彎加分又累積 combo（最多 ×4），立刃越深、G 越大分越高；穿過旗門（紅/藍旗中間）、跳台騰空、空中轉體都加分；搓雪轉彎、漏旗門、摔倒會中斷 combo。進入支線雪道（蘑菇坡、林間道、陡坡）有獎勵。
   <h4>物理</h4>
-  • Carve 半徑 = max(側切半徑 7.8m × cos刃角, 平衡所需半徑)<br>
-  • 刃能吃住的側向力 ≈ tan(刃角 + 雪的抓力角)，冰面（偏藍、反光）抓力很差<br>
+  • 速度靠重力沿坡面的分量，扣掉雪的摩擦（越快越小）、風阻、橫滑時推雪的阻力<br>
+  • 負重 = 重力 + 地形彎曲：凹地被壓、過坡頂變輕（看「負重」數值），刃的抓力跟著變<br>
+  • 板子有轉動慣性：刃咬住時沿著側切弧線轉，入彎要時間建立 G；刃的側向力像輪胎，滑移角 1–3° 是 carving，要太多就洗出去變搓雪<br>
+  • 能立多少刃要看平衡：有速度、有側向力才能深立刃，慢速硬立不上去<br>
+  • 刃能吃住的側向力 ≈ tan(刃角 + 雪的抓力角)，上限約 2g；冰面（偏藍、反光）更差<br>
   • 往立起來的刃那側側滑 → 逆刃摔倒；跳台落地要對準前進方向<br>
   • 電腦：← → 轉彎（Shift 小角度）、↓ 煞車、↑ 壓低
   <p style="opacity:.6;margin:10px 0 0">點任何地方關閉</p>

@@ -2,7 +2,7 @@
 // "physics state -> animated model" mapping.
 import * as THREE from 'three';
 import { Rider, MODES } from './physics.js';
-import { terrain, pisteCenter, activeBranch, branchCenter, height, parkAt, PARK_HALF } from './terrain.js';
+import { terrain, pisteCenter, activeBranch, branchCenter, height, parkAt, PARK_HALF, kickerAt, KICK_SPACING } from './terrain.js';
 import { createRiderModel, createSkierModel, OUTFITS } from './riderModel.js';
 import { Tracks } from './fx.js';
 import { clamp } from './noise.js';
@@ -48,8 +48,8 @@ export function animateRider(model, rider, vis, input, dt) {
 
 // ---------------------------------------------------------------- bots
 const STYLES = [
-  { key: 'carver', kind: 'board', edge: 0.72, pull: 0, across: 52, maxV: 19, lane: 9, name: 'Carver' },
-  { key: 'racer', kind: 'ski', edge: 0.8, pull: 0, across: 38, maxV: 24, lane: 7, name: 'Racer' },
+  { key: 'carver', kind: 'board', edge: 0.72, pull: 0, across: 52, maxV: 21, lane: 9, name: 'Carver' },
+  { key: 'racer', kind: 'ski', edge: 0.8, pull: 0, across: 38, maxV: 25, lane: 7, name: 'Racer' },
   { key: 'cruiser', kind: 'board', edge: 0.45, pull: 0, across: 62, maxV: 13, lane: 12, name: 'Cruiser' },
   { key: 'skier', kind: 'ski', edge: 0.55, pull: 0, across: 55, maxV: 15, lane: 10, name: 'Skier' },
   { key: 'beginner', kind: 'board', edge: 0.32, pull: 0.4, across: 80, maxV: 7, lane: 8, name: 'Beginner' },
@@ -123,21 +123,37 @@ class Bot {
     if (dx > 4 && a > 0.15) this.dir = 1;      // drifting right of the lane: turn back
     if (dx < -4 && a < -0.15) this.dir = -1;
     // obstacles: look ahead along the velocity
-    const look = Math.min(14, 2 + sp * 1.1);
+    const look = Math.min(24, 3 + sp * 1.5);
     const vl = Math.hypot(r.v[0], r.v[2]) || 1;
     const lx = r.p[0] + r.v[0] / vl * look, lz = r.p[2] + r.v[2] / vl * look;
     const hit = terrain.treeHit(lx, lz, 1.6);
-    if (hit) this.dir = hit.x > r.p[0] ? 1 : -1; // turn away from it (right turn = toward -x)
+    let danger = false;
+    if (hit) { this.dir = hit.x > r.p[0] ? 1 : -1; danger = true; } // turn away from it (right turn = toward -x)
+    // drifting off the piste toward the trees: head back to the lane
+    if (Math.abs(dx) > 16) { this.dir = dx > 0 ? 1 : -1; danger = true; }
     // keep clear of the player
     const px = player.p[0] - r.p[0], pz = player.p[2] - r.p[2];
     const pd = Math.hypot(px, pz);
     if (pd < 7 && (px * r.v[0] + pz * r.v[2]) > 0) this.dir = px > 0 ? 1 : -1;
+    // a kicker coming up: straighten out, no skidding into the lip
+    const kk = Math.round((z + 15 - 150) / KICK_SPACING);
+    if (kk >= 0) {
+      const K = kickerAt(kk);
+      if (K.kz - z > -4 && K.kz - z < 32 && Math.abs(r.p[0] - K.kx) < 9 && !parkAt(K.kz)) {
+        this.steerS += clamp(0 - this.steerS, -3 * dt, 3 * dt);
+        this.input.steer = r.grounded ? this.steerS : 0; this.input.pull = 0;
+        return;
+      }
+    }
+    if (!r.grounded) { this.input.steer = 0; this.input.pull = 0; return; }
     let pull = S.pull;
-    if (sp > S.maxV * 1.35) pull = 0.55;
+    // speed control: scrub speed with a skid when going too fast (like real riders do)
+    if (sp > S.maxV) pull = Math.max(pull, clamp((sp - S.maxV) / 5, 0.15, 0.8));
+    if (danger && sp > 8) pull = Math.max(pull, 0.5);
     const target = this.dir * S.edge * (r.crashT > 0 ? 0 : 1);
     this.steerS += clamp(target - this.steerS, -2.6 * dt, 2.6 * dt);
     this.input.steer = this.steerS;
-    this.input.pull = pull * (Math.abs(this.steerS) > 0.2 ? 1 : 0.3);
+    this.input.pull = pull * (Math.abs(this.steerS) > 0.2 ? 1 : 0.5);
   }
 }
 

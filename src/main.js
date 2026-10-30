@@ -198,12 +198,21 @@ $('cambtn').addEventListener('click', () => {
 $('sndbtn').addEventListener('click', () => { audio.start(); audio.setOn(!audio.on); $('sndbtn').textContent = audio.on ? '🔊' : '🔇'; });
 $('reset').addEventListener('click', () => { rider.reset(); tracks.clear(); game.reset(); camInit = false; rebuildWorld(); crowd.reset(rider); });
 $('helpbtn').addEventListener('click', () => $('help').classList.toggle('show'));
-$('help').addEventListener('click', () => $('help').classList.remove('show'));
+$('help').addEventListener('click', (e) => { if (e.target.closest('#assistrow')) return; $('help').classList.remove('show'); });
+let assist = 0.6;
+try { const a = localStorage.getItem('sb_assist'); if (a !== null) assist = +a; } catch {}
+function setAssist(a) {
+  assist = a; rider.assist = a;
+  document.querySelectorAll('.abtn').forEach((b) => b.classList.toggle('on', +b.dataset.a === a));
+  try { localStorage.setItem('sb_assist', String(a)); } catch {}
+}
+document.querySelectorAll('.abtn').forEach((b) => b.addEventListener('click', () => setAssist(+b.dataset.a)));
+setAssist(assist);
 
 const hud = {
   speed: $('speed'), mode: $('mode'), bar: $('carvebar'), edge: $('edgeval'), edgeSide: $('edgeside'),
   needle: $('needle'), beta: $('beta'), g: $('gval'), rad: $('rad'), surf: $('surf'), msg: $('msg'),
-  score: $('score'), combo: $('combo'), best: $('best'), env: $('envlabel'), top: $('top'), dist: $('dist'),
+  load: $('load'), score: $('score'), combo: $('combo'), best: $('best'), env: $('envlabel'), top: $('top'), dist: $('dist'),
 };
 let shownMode = MODES.stop, pendingMode = null, pendingT = 0, hudT = 0;
 function modeLabel(m) {
@@ -233,7 +242,8 @@ function updateHUD(dt) {
   hud.edgeSide.textContent = Math.abs(e) < 3 ? 'FLAT' : e > 0 ? 'TOE 前刃' : 'HEEL 後刃';
   hud.needle.style.transform = `rotate(${e}deg)`;
   hud.beta.textContent = (t.betaS * D).toFixed(0) + '°';
-  hud.g.textContent = Math.abs(t.latG).toFixed(2) + 'g';
+  hud.g.textContent = Math.min(9.9, Math.abs(t.latG)).toFixed(2) + 'g';
+  hud.load.textContent = (rider.grounded ? (t.load ?? 1) : 0).toFixed(1) + 'g';
   hud.rad.textContent = isFinite(t.radius) && t.radius < 200 ? t.radius.toFixed(0) + 'm' : '—';
   hud.surf.textContent = t.ice > 0.4 ? '⚠ 冰面' : t.off > 0.5 ? '野雪' : '壓雪道';
   hud.score.textContent = game.score.toLocaleString();

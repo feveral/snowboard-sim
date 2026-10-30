@@ -1,14 +1,18 @@
 // Snowboard physics. Pure JS, no rendering. Downhill = +Z, up = +Y.
 //
-// Model in short:
-//  * Board heading yaw rotates from (a) the sidecut/balance of the edge
-//    (carve: R = max(Rsidecut·cosθ, v²/(g·tanθ))) and (b) the rider pivoting
-//    the board with the body (skid turns).
-//  * The edge can hold a lateral/normal force ratio of tan(θ + φ) where θ is
-//    edge angle and φ is the snow's "hold" angle. If the turn needs more than
-//    that, the board slides sideways -> skidding / scraping.
-//  * Slip angle β (board heading vs. travel direction) decides
-//    carving / skid-carve / skidding / scraping.
+// Model in short (v2, force based):
+//  * Gravity along the slope accelerates the rider; snow friction (falls slightly with
+//    speed), air drag and snow-plough resistance when sliding sideways slow it down.
+//  * Load N = g·cos(slope) + v²·κ (terrain curvature): compressions add grip, crests unweight.
+//  * The board is a rotating body (yaw rate ω has inertia). The engaged edge steers it toward
+//    the sidecut/balance arc R = max(Rsc·cosθ, v²/(N·tanθ + g_in)); the rider adds body torque
+//    (pivot, brake, low-speed steering) with limited strength.
+//  * Lateral snow force follows a slip curve like a tyre: it rises with slip angle β up to
+//    N·tan(θ+φ), then drops to a kinetic level. Carving settles at β of 1–3°; ask for more
+//    than the edge can give and it washes out into a skid.
+//  * Balance: the rider can only tip as far as the lateral force supports plus angulation,
+//    so edge angle builds through the turn and you can't hold a big edge at walking speed.
+//  * Slip angle β decides carving / skid-carve / skidding / scraping.
 import { clamp, smoothstep } from './noise.js';
 
 const G = 9.81;
@@ -22,6 +26,12 @@ export const PARAMS = {
   cdaUpright: 0.6,
   cdaTuck: 0.32,
   catchSlip: 3.0,       // m/s lateral slide toward the engaged edge -> catch
+  slip0Edge: 0.03,      // rad: slip angle where an engaged edge reaches ~76% of its grip
+  slip0Flat: 0.09,      // rad: same for a flat base
+  kSidecut: 11,         // 1/s: how hard the biting edge steers the board onto its arc
+  kRider: 6,            // 1/s: rider's body torque gain
+  maxYawAcc: 26,        // rad/s²: strongest twist the rider can apply
+  plough: 0.055,        // 1/m: sideways snow-plough drag (a = k·v_lat²)
 };
 
 export const MODES = {
@@ -69,6 +79,10 @@ export class Rider {
     this.airT = 0;
     this.lastPivotDir = 1;
     this.travel = 1;         // +1 riding forward, -1 riding switch (with hysteresis)
+    this.omega = 0;          // yaw rate, + = turning right
+    this.load = G;           // normal acceleration (smoothed)
+    this.aLatS = 0;          // smoothed lateral snow acceleration (signed, +r)
+    if (this.assist === undefined) this.assist = 0.6;
     this.betaS = 0;          // smoothed |slip angle|
     this.mode = MODES.stop;
     this.stats = { dist: 0, turnDist: 0, carveDist: 0, maxSpeed: 0, maxG: 0, crashes: 0, maxAir: 0 };
@@ -114,6 +128,7 @@ export class Rider {
     this.betaS = 0;
     this._frame();
     this.v = [this.f[0] * 2.5, this.f[1] * 2.5, this.f[2] * 2.5];
+    this.omega = 0; this.aLatS = 0; this.load = G;
     this.grounded = true;
     // shove away from trees
     for (let i = 0; i < 10; i++) {
@@ -177,12 +192,14 @@ export class Rider {
     }
     const brake = Math.max(0, pull);
     if (Math.abs(steer) > 0.15) this.lastPivotDir = Math.sign(steer);
-    const betaTarget = -this.lastPivotDir * brake * 1.48; // up to ~85°: nose swings toward the steer side
-    let wPivotRaw = clamp(4.0 * (betaS - betaTarget), -P.pivotRate, P.pivotRate);
-    const alignGain = brake > 0.05 ? 1 : smoothstep(0.07, 0.22, Math.abs(betaS)) * 0.75;
-    const wPivotAll = this.grounded && spA + 1 > 0 ? wPivotRaw * alignGain : 0;
+    const assist = this.assist;
+    // what the rider's body tries to do with the board's rotation
+    const betaTarget = -this.lastPivotDir * brake * 1.48; // brake: swing the nose toward the steer side, up to ~85°
+    let wBody = clamp(4.0 * (betaS - betaTarget), -P.pivotRate, P.pivotRate);
+    const bodyGain = brake > 0.05 ? 1 : smoothstep(0.07, 0.22, Math.abs(betaS)) * (0.35 + 0.6 * assist); // re-align after a slide
 
-    const onBox = this.grounded && !!T.surface(p[0], p[2]).box;
+    const surfNow = T.surface(p[0], p[2]);
+    const onBox = this.grounded && !!surfNow.box;
     tel.onBox = onBox;
     let edgeTarget = steer * this.travel * P.maxEdge;
     if (onBox) edgeTarget = 0; // flat base on the box: slide (50-50 or boardslide with pull)
@@ -192,15 +209,25 @@ export class Rider {
       const grL = n0[0] * n0[1] * this.r[0] + (n0[1] * n0[1] - 1) * this.r[1] + n0[2] * n0[1] * this.r[2]; // gravity across the board
       const sgn = Math.abs(slideR) > 0.4 ? -Math.sign(slideR)
         : spA < 1.5 ? (-Math.sign(grL) || 1)
-        : (Math.sign(wPivotRaw) || this.lastPivotDir) * this.travel;
+        : (Math.sign(wBody) || this.lastPivotDir) * this.travel;
       const be = sgn * (8 + 36 * brake) * (Math.PI / 180);
       edgeTarget += (be - edgeTarget) * smoothstep(0.05, 0.3, brake);
-    } else if (sideways > 0) {
-      const uphill = -Math.sign(dot(v, this.r)) || 1;
-      const ss = uphill * Math.abs(steer) * 14 * (Math.PI / 180);
-      edgeTarget += (ss - edgeTarget) * sideways;
+    } else {
+      if (sideways > 0) {
+        const uphill = -Math.sign(dot(v, this.r)) || 1;
+        const ss = uphill * Math.abs(steer) * 14 * (Math.PI / 180);
+        edgeTarget += (ss - edgeTarget) * sideways;
+      }
+      // balance: you can only lean as far as the snow pushes back (plus angulation at the hips/knees)
+      if (this.grounded && Math.abs(edgeTarget) > 0.01) {
+        const se = Math.sign(edgeTarget);
+        const aE = Math.max(0, se * this.aLatS);
+        const cap = Math.atan2(aE, Math.max(2, this.load)) + 0.42 + 0.22 * assist;
+        edgeTarget = se * Math.min(Math.abs(edgeTarget), cap);
+      }
     }
-    this.edge += clamp(edgeTarget - this.edge, -P.edgeRate * dt, P.edgeRate * dt);
+    const eRate = P.edgeRate * (0.55 + 0.45 * clamp(this.load / G, 0, 1.4));
+    this.edge += clamp(edgeTarget - this.edge, -eRate * dt, eRate * dt);
     const th = Math.abs(this.edge);
     const eSign = Math.sign(this.edge);
     tel.brake = brake;
@@ -222,55 +249,81 @@ export class Rider {
       this._frame();
       const n = this.n, ny = n[1];
       const speed0 = Math.hypot(v[0], v[1], v[2]);
-      const vf0 = dot(v, this.f);
+      const vf0 = dot(v, this.f), vr0 = dot(v, this.r);
+      const surf = surfNow;
+
+      // ---- load: gravity share + terrain curvature along the travel line ----
+      let kap = 0;
+      if (speed0 > 1) {
+        const hx = v[0] / (Math.hypot(v[0], v[2]) || 1), hz = v[2] / (Math.hypot(v[0], v[2]) || 1), d = 1.1;
+        const h0 = T.height(p[0], p[2]);
+        kap = (T.height(p[0] + hx * d, p[2] + hz * d) - 2 * h0 + T.height(p[0] - hx * d, p[2] - hz * d)) / (d * d);
+      }
+      const vh2 = v[0] * v[0] + v[2] * v[2];
+      const loadNow = Math.max(0, G * ny + clamp(kap * vh2 * ny * ny, -2.5 * G, 3 * G));
+      this.load += (loadNow - this.load) * (1 - Math.exp(-dt / 0.04));
+      const N = this.load;
 
       // ---- gravity in the tangent plane ----
       const gt = [G * ny * n[0], -G + G * ny * ny, G * ny * n[2]];
-      const surf = T.surface(p[0], p[2]);
 
-      // ---- yaw rate ----
-      // Carve: the rider's lean (≈ edge angle) balances the snow reaction
-      // (g·tanθ) plus whatever part of gravity points into the turn.
+      // ---- yaw dynamics ----
+      const slip = Math.atan2(Math.abs(vr0), Math.abs(vf0) + 0.3);
       const carveEff = smoothstep(0.05, 0.26, th);
       const rGeo = P.sidecutR * Math.cos(th);
       const gIn = eSign * dot(gt, this.r);                 // gravity toward the turn centre
-      const aC = G * ny * Math.tan(th) + gIn;
+      const aC = N * Math.tan(th) + gIn;
       const rBal = (speed0 * speed0) / Math.max(aC, 0.4);
       const R = Math.max(rGeo, rBal);
       const wCarve = eSign * carveEff * vf0 / R;
-      const wPivot = wPivotAll * (1 - 0.4 * Math.sin(th) * (1 - brake));
-      const wSlow = steer * 1.4 * Math.max(0, 1 - speed0 / 7) * (1 - sideways); // body-steer at low speed
-      const w = wCarve + wPivot + wSlow;
+      // the edge only steers while it's biting (small slip) and loaded
+      const bite = carveEff * (1 - smoothstep(0.12, 0.45, slip)) * clamp(N / G, 0, 1.5) * (1 - 0.85 * brake);
+      const kS = P.kSidecut * bite;
+      // rider torque: weaker when the edge is locked in and the board is heavily loaded
+      const eff = (1 - 0.55 * Math.sin(th) * bite) / (0.45 + 0.55 * clamp(N / G, 0.2, 2));
+      const wSlow = steer * 1.4 * Math.max(0, 1 - speed0 / 7) * (1 - sideways);
+      const wRider = wBody * bodyGain + wSlow;
+      const kR = P.kRider * eff * (brake > 0.05 || Math.abs(wSlow) > 0.05 || bodyGain > 0.05 ? 1 : 0.35);
+      const wWant = (kS * wCarve + kR * wRider) / (kS + kR + 1e-6);
+      let alpha = (kS + kR) * (wWant - this.omega);
+      alpha = clamp(alpha, -P.maxYawAcc - 40 * bite, P.maxYawAcc + 40 * bite);
+      this.omega += alpha * dt;
+      const w = this.omega;
       this.yaw -= w * dt; // + w = turning right; right = -dYaw (see frame)
       this._frame();
       const f = this.f, r = this.r;
       const gf = dot(gt, f), gr = dot(gt, r);
 
-      // ---- longitudinal ----
+      // ---- longitudinal: gravity, snow friction (lower when fast), ----
       let vf = dot(v, f);
       let vr = dot(v, r);
       vf += gf * dt;
-      const fr = surf.mu * G * ny * dt;
+      const muV = surf.mu * (1.2 - 0.35 * smoothstep(1, 18, Math.abs(vf)));
+      const fr = muV * N * dt;
       if (Math.abs(vf) <= fr) vf = 0; else vf -= Math.sign(vf) * fr;
 
-      // ---- lateral: can the edge hold it? ----
-      const aNeed = -vr / dt - gr;
+      // ---- lateral: slip-curve edge force ----
+      const beta = Math.atan2(Math.abs(vr), Math.abs(vf) + 0.2);
+      const aStick = -vr / dt - gr;                      // what it takes to stop sideways motion now
       let tanLim;
-      if (th > 0.02 && Math.sign(aNeed) === eSign) tanLim = Math.tan(Math.min(th * (1 - 0.3 * surf.ice) + surf.phi, 1.35));
+      if (th > 0.02 && Math.sign(aStick) === eSign) tanLim = Math.tan(Math.min(th * (1 - 0.3 * surf.ice) + surf.phi, 1.35));
       else tanLim = Math.tan(Math.max(surf.phi - th * 0.6, 0.05));
-      const aMax = G * ny * tanLim;
-      let aLat, grip;
-      if (Math.abs(aNeed) <= aMax) {
-        aLat = aNeed; vr = 0; grip = true;
-      } else {
-        aLat = Math.sign(aNeed) * aMax * 0.85; // kinetic < static
-        vr += (gr + aLat) * dt;
-        grip = false;
-      }
-      // scraping snow costs some forward speed too
-      if (!grip) {
-        const loss = Math.min(Math.abs(vf), 0.35 * Math.abs(vr) * dt * G * 0.25);
-        vf -= Math.sign(vf) * loss;
+      // the snow itself can only take so much shear before the edge cuts through: ~2g groomed, less on ice
+      tanLim = Math.min(tanLim, 2.0 - 1.1 * surf.ice + 0.3 * surf.off * 0);
+      const b0 = th > 0.1 ? P.slip0Edge : P.slip0Flat + (P.slip0Edge - P.slip0Flat) * th / 0.1;
+      let shape = Math.tanh(beta / b0) * (1 - 0.22 * smoothstep(4 * b0, 0.6, beta));
+      const spLat = Math.hypot(vf, vr);
+      shape = Math.max(shape, 1 - smoothstep(0.3, 1.2, spLat));   // static hold when (almost) stopped
+      const aMax = N * tanLim * shape;
+      const aLat = clamp(aStick, -aMax, aMax);
+      vr += (gr + aLat) * dt;
+      const grip = beta < 3 * b0;
+      // snow plough: sliding sideways pushes a wall of snow (≈ v_lat²), stronger in soft snow
+      if (beta > 0.12) {
+        const pl = Math.min(Math.abs(vr), P.plough * (1 + 1.5 * surf.off) * vr * vr * dt);
+        vr -= Math.sign(vr) * pl;
+        const lossF = Math.min(Math.abs(vf), 0.25 * pl);
+        vf -= Math.sign(vf) * lossF;
       }
 
       // air drag on whole velocity
@@ -282,9 +335,11 @@ export class Rider {
       }
 
       for (let i = 0; i < 3; i++) v[i] = f[i] * vf + r[i] * vr;
+      this.aLatS += (aLat - this.aLatS) * (1 - Math.exp(-dt / 0.08));
 
       // catch an edge: sliding sideways toward the edge you're standing on
-      if (!grip && th > 0.45 && Math.sign(vr) === eSign && Math.abs(vr) > P.catchSlip && spd > 5) {
+      const catchV = P.catchSlip + 1.5 * assist;
+      if (!grip && th > 0.45 && Math.sign(vr) === eSign && Math.abs(vr) > catchV && spd > 5) {
         this.crash('逆刃 Caught an edge');
       }
 
@@ -313,15 +368,16 @@ export class Rider {
       // ---- telemetry / classification ----
       const vfN = dot(v, f), vrN = dot(v, r);
       const speed = Math.hypot(v[0], v[1], v[2]);
-      let beta = Math.atan2(Math.abs(vrN), Math.abs(vfN)); // 0..90°, switch-safe
-      if (speed < 0.5) beta = 0;
+      let betaT = Math.atan2(Math.abs(vrN), Math.abs(vfN)); // 0..90°, switch-safe
+      if (speed < 0.5) betaT = 0;
       const a = 1 - Math.exp(-dt / 0.12);
-      this.betaS += (beta - this.betaS) * a;
+      this.betaS += (betaT - this.betaS) * a;
       const latG = aLat / G;
+      const wPivot = (kR * wRider) / (kS + kR + 1e-6);
       const pivotShare = brake > 0.05 ? Math.abs(wPivot) / (Math.abs(w) + 0.05) : 0;
-      tel.speed = speed; tel.beta = beta; tel.betaS = this.betaS; tel.latG = latG;
+      tel.speed = speed; tel.beta = betaT; tel.betaS = this.betaS; tel.latG = latG;
       tel.grip = grip; tel.skid = Math.abs(vrN); tel.omega = w;
-      tel.omegaCarve = wCarve; tel.omegaPivot = wPivot;
+      tel.omegaCarve = wCarve; tel.omegaPivot = wPivot; tel.load = N / G;
       tel.radius = Math.abs(w) > 0.03 ? speed / Math.abs(w) : Infinity;
       tel.ice = surf.ice; tel.off = surf.off;
       tel.carveQ = clamp(carveEff * (1 - this.betaS / (14 * D2R)) * (1 - 0.8 * pivotShare), 0, 1);
@@ -353,7 +409,13 @@ export class Rider {
       const sp = Math.hypot(v[0], v[1], v[2]);
       const sc = Math.max(0, sp - kd * sp * sp * dt) / (sp || 1);
       for (let i = 0; i < 3; i++) v[i] *= sc;
-      this.yaw -= steer * (tel.grab ? 4.6 : 6.6) * dt; // spin (steer direction = spin direction on screen)
+      // spin: you keep the rotation you took off with; arms/shoulders can wind it up or slow it
+      if (Math.abs(steer) > 0.1) {
+        const wT = steer * (tel.grab ? 4.6 : 6.6);
+        this.omega += clamp(wT - this.omega, -16 * dt, 16 * dt);
+      } else this.omega *= Math.exp(-(6 + 4 * this.assist) * dt); // open up / spot the landing
+      this.yaw -= this.omega * dt;
+      this.load = 0; this.aLatS = 0;
       p[0] += v[0] * dt; p[1] += v[1] * dt; p[2] += v[2] * dt;
       this.mode = MODES.air;
       tel.speed = sp;
@@ -370,12 +432,14 @@ export class Rider {
         const vf = dot(v, this.f), vr = dot(v, this.r);
         const landBeta = Math.atan2(Math.abs(vr), Math.abs(vf));
         tel.landed = impact;
-        if (Math.hypot(vf, vr) > 4 && landBeta > 42 * D2R) this.crash('落地方向歪了');
+        this.load = G + impact * 6; // landing compression
+        if (Math.hypot(vf, vr) > 4 && landBeta > (42 + 16 * this.assist) * D2R) this.crash('落地方向歪了');
         else if (tel.grab && impact > 4) this.crash('還抓著板落地');
         else if (impact > 11) this.crash('落地太重');
         else {
           const keep = 1 - Math.min(0.35, impact * 0.025);
           for (let i = 0; i < 3; i++) v[i] *= keep;
+          this.omega *= 0.5;
         }
       }
     }

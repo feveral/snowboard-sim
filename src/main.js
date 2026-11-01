@@ -372,9 +372,14 @@ function updateCamera(dt) {
   const hv = new THREE.Vector3(v[0], 0, v[2]);
   const sp = hv.length();
   const fl = new THREE.Vector3(rider.n[0], 0, rider.n[2]).normalize();
-  const want = sp > 2.5 ? hv.clone().normalize() : fl.clone().lerp(new THREE.Vector3(rider.f[0], 0, rider.f[2]).multiplyScalar(rider.travel), 0.3).normalize();
+  // fast: look along your path. Slowing down (end of a turn up the hill, a side-slip): swing round
+  // to look down the hill so the screen shows both ends of the board and where each would go
+  const slowView = fl.clone().lerp(new THREE.Vector3(rider.f[0], 0, rider.f[2]).multiplyScalar(rider.travel), 0.15).normalize();
+  const wSlow = 1 - THREE.MathUtils.smoothstep(sp, 2, 6.5);
+  const want = sp > 0.3 ? hv.clone().normalize().lerp(slowView, wSlow).normalize() : slowView;
+  if (want.lengthSq() < 0.01) want.copy(fl);
   if (want.dot(fl) < -0.1) want.addScaledVector(fl, 0.8).normalize(); // never look back uphill
-  const k = 1 - Math.exp(-dt * (sp > 2.5 ? 2.2 : 1.0));
+  const k = 1 - Math.exp(-dt * (1.4 + 0.8 * THREE.MathUtils.smoothstep(sp, 2, 6.5)));
   if (!camInit) camDir.copy(want); else camDir.lerp(want, k).normalize();
   const dist = C.d + Math.min(2.5, sp * 0.06), hgt = C.h + Math.min(1.2, sp * 0.03);
   const target = new THREE.Vector3(p[0], p[1], p[2]).addScaledVector(camDir, -dist);
@@ -423,6 +428,7 @@ function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   readInput(dt);
+  input.camYaw = Math.atan2(camDir.x, camDir.z);
   acc += dt;
   let steps = 0;
   while (acc >= PHYS_DT && steps < 12) { rider.step(PHYS_DT, input); input.ollie = false; rider.tel.ollie = rider.grounded ? false : rider.tel.ollie; acc -= PHYS_DT; steps++; game.update(PHYS_DT); }

@@ -130,6 +130,7 @@ export class Rider {
     this._frame();
     this.v = [this.f[0] * 2.5, this.f[1] * 2.5, this.f[2] * 2.5];
     this.omega = 0; this.aLatS = 0; this.load = G;
+    this.rideAway = 0; this.brakeEdge = 0;
     this.grounded = true;
     // shove away from trees
     for (let i = 0; i < 10; i++) {
@@ -166,8 +167,9 @@ export class Rider {
     }
 
     // ---------------- intent -> edge + pivot ----------------
-    // Controls are relative to the direction of travel (what the camera shows):
-    //   steer  = turn left/right (the right edge is picked automatically, also when riding switch)
+    // Controls are relative to what the camera shows:
+    //   steer  = at speed: turn left/right (the right edge is picked automatically, also switch).
+    //            slow / stopped / sideways / reversing: go toward that side of the screen (below).
     //   pull   = brake: swing the board across (side-slip / hockey stop) on the UPHILL edge;
     //            let go and the board swings back in line with the travel direction.
     this._frame();
@@ -181,10 +183,56 @@ export class Rider {
       const wgt = (1.5 - spA) / 1.5 * 1.5 / gl;
       refF += dot(gt0, this.f) * wgt; refR += dot(gt0, this.r) * wgt;
     }
-    // which end leads: don't re-decide while braking (the board is swung across on purpose)
-    if (!(pull > 0.05 && this.brakeEdge)) { if (refF > 0.4) this.travel = 1; else if (refF < -0.4) this.travel = -1; }
+    // which end leads: don't re-decide while braking (the board is swung across on purpose) or
+    // while you're steering a slow board round toward a screen direction (that picks the end itself)
+    if (!(pull > 0.05 && this.brakeEdge) && !this.rideAway) { if (refF > 0.4) this.travel = 1; else if (refF < -0.4) this.travel = -1; }
     let betaS = Math.atan2(this.travel * refR, Math.abs(refF)); // + = moving to the right of the nose
-    const sideways = smoothstep(0.95, 1.3, Math.abs(betaS));     // ~55°..75°
+    let sideways = smoothstep(0.95, 1.3, Math.abs(betaS));       // ~55°..75°
+
+    // ---- screen-relative steering at low speed ----
+    // At speed the camera follows your path, so "turn right" and "go right on screen" are the same.
+    // Slow, stopped, sideways after a side-slip, or after carving up the hill the camera looks down
+    // the hill instead, and travel-relative steering would send you the wrong way on screen. There a
+    // push means "go that way": the board end on that side drops toward it (riding switch if it's
+    // the tail), so left is always left and right is right.
+    {
+      const fl = Math.atan2(n0[0], n0[2]);
+      const camYaw = input.camYaw ?? fl;                       // no camera (NPCs, tests): look downhill
+      const crx = -Math.cos(camYaw), crz = Math.sin(camYaw);   // screen right
+      const s = Math.sign(steer);
+      const vh = Math.hypot(v[0], v[2]);
+      const backPush = vh > 0.5 && s * (crx * v[0] + crz * v[2]) / vh < -0.3; // pushing against where you're going on screen
+      // keep heading where you pushed until you've picked up speed, then normal steering takes over
+      const keep = this.rideAway === s && (spA < 4 || Math.abs(this.rideErr || 0) > 0.12) && spA < 6;
+      const fresh = this.rideAway !== s;
+      // where you want to go: toward the pushed side of the screen, kept on the downhill half.
+      // The view is locked when you push: the camera turning with you mustn't drag the target round.
+      const cam = fresh ? camYaw : this.rideCam;
+      const want = cam - s * (0.3 + 0.6 * Math.min(1, Math.abs(steer))); // ~25°..50° off the view
+      const rideYaw = fl + clamp(Math.atan2(Math.sin(want - fl), Math.cos(want - fl)), -0.95, 0.95); // steep enough to get going
+      // the end that needs the least swing (small bias to keep the current one)
+      const dN = Math.abs(Math.atan2(Math.sin(this.yaw - rideYaw), Math.cos(this.yaw - rideYaw)));
+      const dLead = this.travel > 0 ? dN : Math.PI - dN;          // swing for the end that leads now
+      const end = (dN - (this.travel > 0 ? 0.35 : 0)) <= (Math.PI - dN - (this.travel < 0 ? 0.35 : 0)) ? 1 : -1;
+      // pushing against your travel only counts as "go the other way" when the trailing end is
+      // already close to that direction (end of a turn up the hill); otherwise it's a normal turn
+      const reverse = backPush && end !== this.travel && Math.PI - dLead < 0.9;
+      const active = this.grounded && Math.abs(steer) > 0.15 && pull <= 0.05 && !T.surface(p[0], p[2]).box
+        && (spA < 1.2 || sideways > 0.3 || (spA < 5 && reverse) || keep);
+      if (!active) this.rideAway = 0;
+      else {
+        this.rideYaw = rideYaw;
+        if (fresh) {
+          this.rideCam = camYaw;
+          this.rideEnd = end;
+          this.rideAway = s;
+          this.rideErr = 1;
+        }
+        this.travel = this.rideEnd;
+        betaS = Math.atan2(this.travel * refR, Math.abs(refF));
+        sideways = smoothstep(0.95, 1.3, Math.abs(betaS));
+      }
+    }
     // No automatic re-orienting: the board only turns because of the edge (carving), the
     // rider's input, or the snow. The brake edge is chosen when you start braking and stays.
     const twistWant = false, twist = false;
@@ -223,23 +271,15 @@ export class Rider {
       const betaFixed = Math.atan2(Math.sin(noseYaw - this.brakeYaw), Math.cos(noseYaw - this.brakeYaw));
       wBody = clamp(4.0 * (betaFixed - betaTarget), -P.pivotRate, P.pivotRate) * smoothstep(0.8, 2.0, spA);
       bodyGain = 1;
-    } else if (this.grounded && Math.abs(steer) > 0.15 && (sideways > 0.3 || this.rideAway)) {
-      // sideways after a side-slip: push left/right to drop that end of the board downhill and
-      // ride away; keeps swinging until the board points down the hill
-      const fl = Math.atan2(n0[0], n0[2]);                       // downhill heading
-      if (!this.rideAway) {
-        this.rideAway = Math.sign(steer);
-        const srx = -Math.cos(fl), srz = Math.sin(fl);             // screen right when looking downhill
-        const endR = Math.sign(this.f[0] * srx + this.f[2] * srz) || 1;
-        this.rideEnd = this.rideAway > 0 ? endR : -endR;           // the board end on the side you pushed
-      }
+    } else if (this.rideAway) {
+      // slow / sideways / reversing: left & right mean SCREEN left & right. Swing the chosen end
+      // toward the direction you pushed (flat base), then ride off that way – nose or tail.
       const endYaw = this.yaw + (this.rideEnd < 0 ? Math.PI : 0);
-      const err = Math.atan2(Math.sin(endYaw - fl), Math.cos(endYaw - fl));
-      wBody = clamp(2.5 * err, -1.8, 1.8);                         // swing that end down the fall line
+      const err = Math.atan2(Math.sin(endYaw - this.rideYaw), Math.cos(endYaw - this.rideYaw));
+      this.rideErr = err;
+      wBody = clamp(2.8 * err, -2.0, 2.0);
       bodyGain = 1;
-      if (Math.abs(err) < 0.2) this.rideAway = 0;
     }
-    if (this.rideAway && (Math.abs(steer) < 0.15 || brake > 0.05 || !this.grounded)) this.rideAway = 0;
 
     const surfNow = T.surface(p[0], p[2]);
     const onBox = this.grounded && !!surfNow.box;

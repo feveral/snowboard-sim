@@ -109,3 +109,53 @@ for (const dir of [1, -1]) run(`${dir > 0 ? 'toeside' : 'heelside'} side-slip ho
   if (Math.abs(t - 9.99) < 0.01) console.log(`  after steering away: slip ${(r.tel.betaS * 57.3).toFixed(0)}°, ${r.mode.key}`);
   return { steer: 0, pull: 0 };
 }, 1000);
+
+// 10. Screen-relative steering: a camera like main.js; after a stop (side-slip, or a carve up the
+//     hill) a push left/right must make the rider travel toward that side of the SCREEN.
+function camFollow(r, st, dt) {
+  const sp = Math.hypot(r.v[0], r.v[2]);
+  const n = r.n, fl = [n[0], n[2]]; const l = Math.hypot(...fl) || 1; fl[0] /= l; fl[1] /= l;
+  let sv = [fl[0] + 0.15 * (r.f[0] * r.travel - fl[0]), fl[1] + 0.15 * (r.f[2] * r.travel - fl[1])];
+  const ls = Math.hypot(...sv) || 1; sv = [sv[0] / ls, sv[1] / ls];
+  const ss = (x) => { const t = Math.min(1, Math.max(0, (x - 2) / 4.5)); return t * t * (3 - 2 * t); };
+  const w = 1 - ss(sp);
+  let want = sp > 0.3 ? [r.v[0] / sp + (sv[0] - r.v[0] / sp) * w, r.v[2] / sp + (sv[1] - r.v[2] / sp) * w] : sv;
+  if (want[0] * fl[0] + want[1] * fl[1] < -0.1) want = [want[0] + 0.8 * fl[0], want[1] + 0.8 * fl[1]];
+  const lw = Math.hypot(...want) || 1; want = [want[0] / lw, want[1] / lw];
+  if (!st.cam) st.cam = want.slice();
+  const k = 1 - Math.exp(-dt * (1.4 + 0.8 * ss(sp)));
+  st.cam = [st.cam[0] + (want[0] - st.cam[0]) * k, st.cam[1] + (want[1] - st.cam[1]) * k];
+  const lc = Math.hypot(...st.cam); st.cam = [st.cam[0] / lc, st.cam[1] / lc];
+  return Math.atan2(st.cam[0], st.cam[1]);
+}
+function screenTest(name, setup, push) {
+  let res = '';
+  run(name, setup.t + 9, (r, t, st) => {
+    const camYaw = camFollow(r, st, DT);
+    let inp;
+    if (t < setup.t) inp = setup.bot(r, t, st);
+    else {
+      if (st.p0 === undefined) { st.p0 = r.p.slice(); st.cy = camYaw; }
+      inp = { steer: t < setup.t + 3 ? push * 0.8 : 0, pull: 0 };
+      if (t > setup.t + 4.5 && !res) {
+        // screen right as the player sees it now
+        const rx = -Math.cos(camYaw), rz = Math.sin(camYaw);
+        const side = (r.v[0] * rx + r.v[2] * rz) * 3.6;
+        res = `  pushed ${push > 0 ? 'RIGHT' : 'LEFT'}: now going ${side.toFixed(1)} km/h toward screen-right (${Math.sign(side) === push && Math.abs(side) > 2 ? 'OK' : 'WRONG'}), ${r.travel < 0 ? 'switch' : 'regular'}, ${(r.tel.speed * 3.6).toFixed(0)} km/h, ${r.mode.key}`;
+        console.log(res);
+      }
+    }
+    inp.camYaw = camYaw;
+    return inp;
+  });
+}
+const slipStop = { t: 6, bot: (r, t) => t < 3 ? { steer: 0, pull: -1 } : { steer: 0.3, pull: 1 } };
+const heelStop = { t: 6, bot: (r, t) => t < 3 ? { steer: 0, pull: -1 } : { steer: -0.3, pull: 1 } };
+// carve hard one way until the board points up the hill and stops
+const carveUp = (dir) => ({ t: 9, bot: (r, t) => t < 3 ? { steer: Math.max(-0.3, Math.min(0.3, rel(r) * 0.8)), pull: -1 } : { steer: dir * 0.75, pull: 0 } });
+for (const push of [1, -1]) {
+  screenTest(`toeside side-slip stop, then push ${push > 0 ? 'right' : 'left'}`, slipStop, push);
+  screenTest(`heelside side-slip stop, then push ${push > 0 ? 'right' : 'left'}`, heelStop, push);
+  screenTest(`carve right up the hill, then push ${push > 0 ? 'right' : 'left'}`, carveUp(1), push);
+  screenTest(`carve left up the hill, then push ${push > 0 ? 'right' : 'left'}`, carveUp(-1), push);
+}
